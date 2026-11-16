@@ -1,0 +1,138 @@
+{
+  "meta": {
+    "git_sha": "b123a644981c024561812901b6981a3ac0db822d",
+    "machine_node": "87d7618feec8",
+    "machine_arch": "x86_64",
+    "platform": "Linux-6.6.159+-x86_64-with-glibc2.36",
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "omp_num_threads": "unset",
+    "numpy_version": "2.5.5",
+    "scipy_version": "1.18.1",
+    "ram_total_bytes": 67431940096,
+    "memory_budget_bytes": 2000000000,
+    "quick": false,
+    "preflight_estimates_bytes": {
+      "1350": 210000000.0,
+      "10800": 370000000.0,
+      "40320": 1650000000.0,
+      "43200": 1820000000.0,
+      "86400": 5340000000.0
+    }
+  },
+  "mps_reference": {
+    "n_terms": 32,
+    "k2_per_m2": 9.639723960764384,
+    "sigma_min": 1.4523775542782764e-07,
+    "c0": 0.2454621009152391,
+    "f_ref_hz": 148140270.54905307,
+    "n_terms_24": 24,
+    "k2_24_per_m2": 9.639723851938735,
+    "sigma_min_24": 1.9145359201447324e-06,
+    "f_ref_24_hz": 148140269.71285376,
+    "n_terms_check": 32,
+    "k2_check_per_m2": 9.639723960764384,
+    "sigma_min_check": 1.4523775542782764e-07,
+    "rel_diff_24_vs_32": 1.1289290998343372e-08
+  },
+  "predictions": {
+    "P1": "uniform refinement: |k_h^2 - k^2| prop N^(-4/9) asymptotically (|||e|||^2 ~ h^(4/3) from H ~ r^(-1/3); N prop h^-3); pre-asymptotic slopes between -4/9 and -2/3.",
+    "P2": "Dorfler-adaptive (residual or ZZ): prop N^(-2/3) asymptotically. Equidistribution count: per-element error^2 ~ h^5 r^(2 alpha - 4), alpha = 2/3; h(r) ~ delta^(1/5) r^((4 - 2 alpha)/5); N ~ int h^-3 r dr is finite iff alpha > 1/3, so isotropic refinement of this edge singularity recovers the smooth rate.",
+    "P3": "at equal N the uniform/adaptive error ratio grows like N^(2/9) (about 2.1 after a 30x growth from equal error).",
+    "P4": "random marking with the adaptive run's per-iteration counts behaves like uniform refinement and loses to Dorfler.",
+    "P5": "a-priori geometric marking (distance to the re-entrant edge, same counts) is close to Dorfler on this geometry; the estimator's value is not needing to know where the singularity is.",
+    "P6": "explicit time domain: the adapted mesh's Voronoi dt_max is smaller than that of the uniform mesh of equal eigenvalue error (dt prop h_min); report N/dt for both (adaptivity is not free in the time domain; LTS exists).",
+    "P7": "the residual effectivity eta/|||e||| on the box (\u00a75 E3) is constant to within the level-ratio band across similar Kuhn meshes; eta_ZZ / ||curl e|| is close to 1 there."
+  },
+  "arms": {
+    "box": {
+      "arm": "box",
+      "levels": [
+        {
+          "level": "L0",
+          "generations": 0,
+          "n_cells": 630,
+          "n_dofs": 537,
+          "h_max_m": 0.1732050807568878,
+          "f0_hz": 367574830.53540426,
+          "f1_hz": 519721832.5689485,
+          "k2_per_m2": 59.348515761731626,
+          "k2_exact_per_m2": 59.620467402498974,
+          "rel_err_signed": -0.004561380556301196,
+          "abs_err_k2_per_m2": 0.2719516407673481,
+          "eta2_res_per_m2": 216.52926165533242,
+          "eta_res_per_m": 14.71493328749174,
+          "err_u_l2_sq_per_m2": 2.9775155906568624,
+          "err_energy_sq_per_m2": 5.683079540613807,
+          "err_energy_per_m": 2.3839210432843214,
+          "theta_res": 6.172575777601684,
+          "eta2_zz_per_m2": 3.1718401047825617,
+          "eta_zz_per_m": 1.780966059413419,
+          "err_curl_sq_per_m2": 2.705563949956945,
+          "err_curl_per_m": 1.644859857239195,
+          "theta_zz": 1.0827463820551075,
+          "t_solve_s": 0.042037883999910264
+        },
+        {
+          "level": "L1",
+          "generations": 3,
+          "n_cells": 5040,
+          "n_dofs": 5058,
+          "h_max_m": 0.08660254037844395,
+          "f0_hz": 368138188.0376072,
+          "f1_hz": 521935820.8187525,
+          "k2_per_m2": 59.53057421723221,
+          "k2_exact_per_m2": 59.620467402498974,
+          "rel_err_signed": -0.001507757137492676,
+          "abs_err_k2_per_m2": 0.08989318526676726,
+          "eta2_res_per_m2": 47.24055458687786,
+          "eta_res_per_m": 6.873176455386393,
+          "err_u_l2_sq_per_m2": 0.7407988783761829,
+          "err_energy_sq_per_m2": 1.3917045715566734,
+          "err_energy_per_m": 1.1797052901282903,
+          "theta_res": 5.826180922388634,
+          "eta2_zz_per_m2": 0.6970944298891375,
+          "eta_zz_per_m": 0.8349218106440491,
+          "err_curl_sq_per_m2": 0.6509056931804906,
+          "err_curl_per_m": 0.8067872663723012,
+          "theta_zz": 1.0348723206778587,
+          "t_solve_s": 0.37791929000013624
+        },
+        {
+          "level": "L2",
+          "generations": 6,
+          "n_cells": 40320,
+          "n_dofs": 43692,
+          "h_max_m": 0.043301270189221974,
+          "f0_hz": 368347882.1673077,
+          "f1_hz": 522573725.40927327,
+          "k2_per_m2": 59.59841160884194,
+          "k2_exact_per_m2": 59.620467402498974,
+          "rel_err_signed": -0.00036993661099857673,
+          "abs_err_k2_per_m2": 0.022055793657031586,
+          "eta2_res_per_m2": 11.837928432655973,
+          "eta_res_per_m": 3.4406290751337862,
+          "err_u_l2_sq_per_m2": 0.18514807252521429,
+          "err_energy_sq_per_m2": 0.3482403514626359,
+          "err_energy_per_m": 0.590118929930769,
+          "theta_res": 5.830399434123271,
+          "eta2_zz_per_m2": 0.16721668675312665,
+          "eta_zz_per_m": 0.4089213698905043,
+          "err_curl_sq_per_m2": 0.16309227893742156,
+          "err_curl_per_m": 0.4038468508449974,
+          "theta_zz": 1.0125654540449904,
+          "t_solve_s": 30.15298770199979
+        }
+      ],
+      "level_ratios": {
+        "L1_over_L0": {
+          "theta_res_ratio": 0.9438816358528952,
+          "theta_zz_ratio": 0.9557846027743068
+        },
+        "L2_over_L1": {
+          "theta_res_ratio": 1.000724061231677,
+          "theta_zz_ratio": 0.9784448127685386
+        }
+      }
+    }
+  }
+}

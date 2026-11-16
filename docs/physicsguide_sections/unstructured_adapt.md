@@ -531,10 +531,29 @@ Cross-arm quantities in `results/adapt_study.json`:
     `xfail(strict=True)` with the exact printed slopes.
 * **Wall-time comparison** (`time_to_error.<arm>.adapt_cum_wall_s` vs
   `time_to_error.<arm>.uniform_finest_single_solve_s`, with Rule 8 resolution status in
-  `time_to_error.<arm>.resolution_status` against $2 \times \mathrm{final\_solve\_se\_s}$).
+  `time_to_error.<arm>.resolution_status` against $2 \times \mathrm{final\_solve\_se\_s}$): the finest uniform solve
+  (generation 5, $49\,006$ DOFs, relative eigenvalue error $3.6216 \times 10^{-3}$) takes
+  `uniform_finest_single_solve_s = 19.125 s` ($\pm 0.0379\,\mathrm{s}$ SE across 3 repeats, cumulative loop time
+  $28.860\,\mathrm{s}$), whereas `residual` ($\theta = 0.5$) reaches $3.3586 \times 10^{-3} \le 3.6216 \times 10^{-3}$ at
+  iteration 6 ($12\,577$ DOFs) in `adapt_cum_wall_s = 5.424 s` (`ratio_adapt_cum_over_uniform_single = 0.2836`,
+  `RESOLVED`) and `theta03` ($\theta = 0.3$) reaches $2.6700 \times 10^{-3}$ at iteration 8 ($10\,431$ DOFs) in
+  `4.563 s` (`ratio = 0.2386`, `RESOLVED`), while none of `random0`–`random2` reach $3.6216 \times 10^{-3}$ within the
+  $49\,006$-DOF budget (`reached_finest_uniform_error = False`, `ratio = 1.272–1.314`).
 * **Explicit time-step cost (P6)** (`p6_voronoi_export.dt_ratio_adapt_over_uniform` and
   `p6_voronoi_export.work_rate_ratio_adapt_over_uniform`), comparing the final adapted mesh against the uniform generation
-  with the closest eigenvalue error (`p6_voronoi_export.uniform_closest_error`).
+  with the closest eigenvalue error (`p6_voronoi_export.uniform_closest_error`): on the final `residual` mesh ($37\,020$
+  cells, $41\,817$ DOFs, `abs_rel_err = 2.2222e-3`), `voronoi_export` reduces negative faces from `13,470` to `285` with
+  element-rate step $\Delta t_{\mathrm{rate}} = 1.7354 \times 10^{-11}\,\mathrm{s}$ and explicit work rate
+  $N/\Delta t = 2.4096 \times 10^{15}\,\mathrm{s}^{-1}$, compared to uniform generation 5 ($43\,200$ cells, $49\,006$
+  DOFs, `abs_rel_err = 3.6216e-3`, $\Delta t_{\mathrm{rate}} = 2.1769 \times 10^{-11}\,\mathrm{s}$,
+  $N/\Delta t = 2.2512 \times 10^{15}\,\mathrm{s}^{-1}$), giving `dt_ratio_adapt_over_uniform = 0.7972` and
+  `work_rate_ratio_adapt_over_uniform = 1.0703`.
+
+![Initial and residual-adapted L-prism mesh cut views coloured by bisection refinement level](../img/unstructured_adapt_mesh.png)
+
+![L-prism energy error, residual indicator, and eigenvalue convergence vs DOFs](../img/unstructured_adapt_convergence.png)
+
+![Residual and ZZ effectivity indices vs DOFs on the PEC box and L-prism](../img/unstructured_adapt_effectivity.png)
 
 ## 9. Limits and failure modes
 

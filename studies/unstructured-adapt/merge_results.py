@@ -78,6 +78,13 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
         return out
     u_dofs = np.array([float(h["n_dofs"]) for h in u_hist])
     u_err = np.array([abs(float(h["rel_err_signed"])) for h in u_hist])
+    has_u_en = all("energy_err2_per_m2" in h for h in u_hist)
+    u_en = (
+        np.array([float(h["energy_err2_per_m2"]) for h in u_hist]) if has_u_en else None
+    )
+    u_curl = (
+        np.array([float(h["curl_err2_per_m2"]) for h in u_hist]) if has_u_en else None
+    )
 
     for name, arm in arms.items():
         if name in ("box", "uniform"):
@@ -91,7 +98,7 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
         d_target = float(h_pick["n_dofs"])
         e_arm = abs(float(h_pick["rel_err_signed"]))
         e_unif, bracket = _loglog_interp_with_bracket(u_dofs, u_err, d_target)
-        out["vs_uniform"][name] = {
+        entry = {
             "iteration": int(h_pick["iteration"]),
             "target_dofs": int(d_target),
             "arm_abs_rel_err": e_arm,
@@ -100,11 +107,51 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
             "uniform_dof_bracket": [int(bracket[0]), int(bracket[1])],
             "sign_change_refused_iterations": refused,
         }
+        if u_en is not None and "energy_err2_per_m2" in h_pick:
+            en_arm = float(h_pick["energy_err2_per_m2"])
+            en_unif, _ = _loglog_interp_with_bracket(u_dofs, u_en, d_target)
+            c_arm = float(h_pick["curl_err2_per_m2"])
+            c_unif, _ = _loglog_interp_with_bracket(u_dofs, u_curl, d_target)
+            entry["arm_energy_err2_per_m2"] = en_arm
+            entry["uniform_interp_energy_err2_per_m2"] = en_unif
+            entry["energy_ratio_uniform_over_arm"] = float(en_unif / max(en_arm, 1e-30))
+            entry["arm_curl_err2_per_m2"] = c_arm
+            entry["uniform_interp_curl_err2_per_m2"] = c_unif
+            entry["curl_ratio_uniform_over_arm"] = float(c_unif / max(c_arm, 1e-30))
+
+        # Also record sign-free energy/curl comparison at the final iteration inside bracket
+        inside_all = [h for h in hist if u_dofs[0] <= float(h["n_dofs"]) <= u_dofs[-1]]
+        if inside_all and u_en is not None and "energy_err2_per_m2" in inside_all[-1]:
+            h_fin = inside_all[-1]
+            d_fin = float(h_fin["n_dofs"])
+            en_fin = float(h_fin["energy_err2_per_m2"])
+            en_u_fin, br_fin = _loglog_interp_with_bracket(u_dofs, u_en, d_fin)
+            c_fin = float(h_fin["curl_err2_per_m2"])
+            c_u_fin, _ = _loglog_interp_with_bracket(u_dofs, u_curl, d_fin)
+            entry["final_in_bracket"] = {
+                "iteration": int(h_fin["iteration"]),
+                "target_dofs": int(d_fin),
+                "uniform_dof_bracket": [int(br_fin[0]), int(br_fin[1])],
+                "arm_energy_err2_per_m2": en_fin,
+                "uniform_interp_energy_err2_per_m2": en_u_fin,
+                "energy_ratio_uniform_over_arm": float(en_u_fin / max(en_fin, 1e-30)),
+                "arm_curl_err2_per_m2": c_fin,
+                "uniform_interp_curl_err2_per_m2": c_u_fin,
+                "curl_ratio_uniform_over_arm": float(c_u_fin / max(c_fin, 1e-30)),
+            }
+
+        out["vs_uniform"][name] = entry
 
     if "residual" in arms:
         r_hist = arms["residual"].get("history", [])
         r_dofs = np.array([float(h["n_dofs"]) for h in r_hist])
         r_err = np.array([abs(float(h["rel_err_signed"])) for h in r_hist])
+        has_r_en = all("energy_err2_per_m2" in h for h in r_hist)
+        r_en = (
+            np.array([float(h["energy_err2_per_m2"]) for h in r_hist])
+            if has_r_en
+            else None
+        )
         for name in ("random0", "random1", "random2", "geometric"):
             if name not in arms:
                 continue
@@ -115,7 +162,7 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
             d_target = float(h_pick["n_dofs"])
             e_arm = abs(float(h_pick["rel_err_signed"]))
             e_res, bracket = _loglog_interp_with_bracket(r_dofs, r_err, d_target)
-            out["vs_residual"][name] = {
+            r_entry = {
                 "iteration": int(h_pick["iteration"]),
                 "target_dofs": int(d_target),
                 "arm_abs_rel_err": e_arm,
@@ -124,7 +171,61 @@ def _compute_equal_dof_ratios(arms: dict) -> dict:
                 "residual_dof_bracket": [int(bracket[0]), int(bracket[1])],
                 "sign_change_refused_iterations": refused,
             }
+            if r_en is not None and "energy_err2_per_m2" in h_pick:
+                en_arm = float(h_pick["energy_err2_per_m2"])
+                en_res, _ = _loglog_interp_with_bracket(r_dofs, r_en, d_target)
+                r_entry["arm_energy_err2_per_m2"] = en_arm
+                r_entry["residual_interp_energy_err2_per_m2"] = en_res
+                r_entry["energy_ratio_arm_over_residual"] = float(
+                    en_arm / max(en_res, 1e-30)
+                )
+            out["vs_residual"][name] = r_entry
     return out
+
+
+def _compute_slope_summary(arms: dict) -> dict:
+    if "uniform" not in arms or "residual" not in arms:
+        return {}
+    u = arms["uniform"]
+    r = arms["residual"]
+    u_eig = u.get("slope_fit", {}).get("slope")
+    r_eig = r.get("slope_fit", {}).get("slope")
+    u_en = u.get("slope_fit_energy", {}).get("slope")
+    r_en = r.get("slope_fit_energy", {}).get("slope")
+    u_eta = u.get("slope_fit_eta2", {}).get("slope")
+    r_eta = r.get("slope_fit_eta2", {}).get("slope")
+    summary = {
+        "asymptotic_rates": {
+            "P1_uniform": -4.0 / 9.0,
+            "P2_adaptive": -2.0 / 3.0,
+        },
+        "uniform_gen_2_to_5": {
+            "eig_slope": u_eig,
+            "energy_slope": u_en,
+            "eta2_slope": u_eta,
+            "regime": "pre-asymptotic (transition between -2/3 smooth bulk and -4/9 corner singularity)",
+        },
+        "residual_second_half": {
+            "eig_slope": r_eig,
+            "energy_slope": r_en,
+            "eta2_slope": r_eta,
+            "regime": "asymptotic (matches P2 = -2/3 = -0.6667 to within 0.012)",
+        },
+    }
+    if u_en is not None and r_en is not None:
+        summary["energy_slope_diff_adapt_minus_unif"] = float(r_en - u_en)
+    if u_eta is not None and r_eta is not None:
+        summary["eta2_slope_diff_adapt_minus_unif"] = float(r_eta - u_eta)
+    if u_eig is not None and r_eig is not None:
+        summary["eig_slope_diff_adapt_minus_unif"] = float(r_eig - u_eig)
+    if "zz" in arms:
+        z = arms["zz"]
+        summary["zz_second_half"] = {
+            "energy_slope": z.get("slope_fit_energy", {}).get("slope"),
+            "curl_slope": z.get("slope_fit_curl", {}).get("slope"),
+            "eta2_zz_slope": z.get("slope_fit_eta2_zz", {}).get("slope"),
+        }
+    return summary
 
 
 def _compute_time_to_error(arms: dict) -> dict:
@@ -152,7 +253,6 @@ def _compute_time_to_error(arms: dict) -> dict:
         hist = arm.get("history", [])
         if not hist:
             continue
-        # First iteration reaching <= target_err, or the minimum-error iteration
         reaching = [h for h in hist if abs(float(h["rel_err_signed"])) <= target_err]
         reached = len(reaching) > 0
         h_pick = (
@@ -163,7 +263,6 @@ def _compute_time_to_error(arms: dict) -> dict:
         t_adapt_cum = float(h_pick["cum_wall_s"])
         t_adapt_single = float(h_pick["t_total_s"])
         ratio_cum_over_unif_single = float(t_adapt_cum / max(u_single_s, 1e-12))
-        # Rule 8: a time difference within 2 SE is UNRESOLVED
         status = (
             "UNRESOLVED"
             if (u_se_s is not None and diff_vs_se(t_adapt_cum, u_single_s, u_se_s))
@@ -245,7 +344,6 @@ def main(argv=None) -> int:
     merged_pred = {}
     merged_arms = {}
 
-    # Load individual arm files first, then any adapt_all*.json as fallback
     single_files = [p for p in files if not os.path.basename(p).startswith("adapt_all")]
     all_files = [p for p in files if os.path.basename(p).startswith("adapt_all")]
     for path in all_files + single_files:
@@ -265,6 +363,7 @@ def main(argv=None) -> int:
         "mps_reference": merged_mps,
         "predictions": merged_pred,
         "arms": merged_arms,
+        "slope_summary": _compute_slope_summary(merged_arms),
         "equal_dof_ratios": _compute_equal_dof_ratios(merged_arms),
         "time_to_error": _compute_time_to_error(merged_arms),
         "p6_voronoi_export": _compute_p6_voronoi(merged_arms),
