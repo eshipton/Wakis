@@ -1221,3 +1221,37 @@ def test_lts_requires_stability():
     """`stability=False` (eigen-only loops in adapt.py) skips the operators LTS certifies from."""
     with pytest.raises(ValueError, match="lts requires stability=True"):
         UnstructuredFIT3D(_small_box(), lts=2, stability=False)
+
+
+def test_lts_large_massless_block():
+    """
+    LTS on a Voronoi mesh whose massless cluster exceeds the device block cap.
+
+    `massless_tol=0.1` on the small box (test design choice) joins the massless
+    edges into a cluster larger than `MAX_MASSLESS_BLOCK`; the device operator
+    must still refuse it, while the host Schur complement used by `TetLTS`
+    must equal ``K_ff - K_sf^T K_ss^-1 K_sf`` from a dense solve to <= 1e-12.
+    """
+    from scipy.sparse.csgraph import connected_components
+
+    from wakis.unstructured.gpu import MAX_MASSLESS_BLOCK
+
+    s = UnstructuredFIT3D(_small_box(), massless_tol=0.1)
+    Kss = (s.Cs.T @ s.Mnu @ s.Cs).tocsr()
+    _, lab = connected_components(Kss != 0, directed=False)
+    big = int(np.bincount(lab).max())
+    print(f"largest massless block {big} edges (cap {MAX_MASSLESS_BLOCK})")
+    assert big > MAX_MASSLESS_BLOCK  # the test reaches the formerly refused regime
+    with pytest.raises(NotImplementedError, match="massless block"):
+        massless_schur_operator(s)
+
+    K = effective_stiffness(s).toarray()
+    Ksf = s._Ksf.toarray()
+    K_ref = s.K.toarray() - Ksf.T @ la.solve(Kss.toarray(), Ksf, assume_a="sym")
+    rel = np.abs(K - K_ref).max() / np.abs(K_ref).max()
+    print(f"Schur complement rel. error {rel:.3e}")
+    assert rel <= 1e-12
+
+    zero_lvl = np.zeros(s.free.size, dtype=int)
+    lts = TetLTS(s, s.dt, zero_lvl, [])
+    assert lts.C_eff_nnz > 0

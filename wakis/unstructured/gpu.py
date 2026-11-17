@@ -72,12 +72,23 @@ def _max_row_nnz(A):
     return int(np.diff(A.indptr).max(initial=0))
 
 
-def massless_schur_operator(solver):
+def massless_schur_operator(solver, max_block=MAX_MASSLESS_BLOCK):
     """
     ``S = K_ss^-1 K_sf`` (sparse) of a Voronoi `UnstructuredFIT3D` solver.
 
     ``K_ss = C_s^T M_nu C_s`` couples two massless edges only when they share
     a face; its connected components (blocks) are inverted densely.
+
+    Parameters
+    ----------
+    solver : UnstructuredFIT3D
+        Voronoi solver with massless edges.
+    max_block : int or None, optional
+        Largest block inverted densely; a larger block raises
+        ``NotImplementedError``. The default bounds the device kernels' row
+        length; host callers that form the Schur complement explicitly (local
+        time stepping) pass ``None``, since the fill is then intrinsic to
+        ``K_sf^T K_ss^-1 K_sf``.
 
     Returns
     -------
@@ -95,9 +106,9 @@ def massless_schur_operator(solver):
     Kss = (solver.Cs.T @ solver.Mnu @ solver.Cs).tocsr()
     n_comp, lab = connected_components(Kss != 0, directed=False)
     sizes = np.bincount(lab, minlength=n_comp)
-    if sizes.max(initial=0) > MAX_MASSLESS_BLOCK:
+    if max_block is not None and sizes.max(initial=0) > max_block:
         raise NotImplementedError(
-            f"massless block of {sizes.max()} edges (> {MAX_MASSLESS_BLOCK}): "
+            f"massless block of {sizes.max()} edges (> {max_block}): "
             "the dense block inverse would fill in; lower massless_tol"
         )
     rows, cols, vals = [], [], []

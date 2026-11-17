@@ -100,7 +100,7 @@ def effective_stiffness(solver):
     """
     K = solver.K.tocsr()
     if solver.hodge == "voronoi" and solver.massless.size > 0:
-        _, Sop, _, _ = massless_schur_operator(solver)
+        _, Sop, _, _ = massless_schur_operator(solver, max_block=None)
         K = (K - solver._Ksf.T @ Sop).tocsr()
         K.eliminate_zeros()
     return K
@@ -456,7 +456,7 @@ class TetLTS:
         self.whitney = self.M_diag is None
 
         if solver.hodge == "voronoi" and solver.massless.size > 0:
-            _, Sop, _, _ = massless_schur_operator(solver)
+            _, Sop, _, _ = massless_schur_operator(solver, max_block=None)
             C_eff = (solver.Cf - solver.Cs @ Sop).tocsr()
             C_eff.eliminate_zeros()
             self.C_eff_nnz = int(C_eff.nnz)
