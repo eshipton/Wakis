@@ -455,6 +455,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Visual examples library ([EXAMPLES.md](EXAMPLES.md)): built tutorials, studies and 157 planned examples with literature references
 - [x] Setup schematics, labelled overlays and graded/non-square meshes in Chapters 2–7 and Tutorials 8.1, 8.2 and 8.4–8.8 (Chapter 1 and Tutorial 8.3 in progress)
 - [ ] Tutorial 3.5: 3D resolution study (staircase vs conformal vs tensor)
+- [ ] Illustrated user manual: one figure per concept, starting with Section 4 (FIT theory and method comparison); figures will live in `user_manual_figures/`
 - [x] Laser tutorials: DFB (7.7), microdisk (7.8), BIC laser (7.9) and PCSEL (7.10)
 - [x] Coupled-wave theory for photonic-crystal surface-emitting lasers (`wakis.pcsel_cwt`)
 - [x] Vacuum electronics, linear: bunch through a slow-wave structure (8.5), traveling-wave-tube small-signal gain (8.6), metamaterial slow-wave structure with reversed Cherenkov radiation and backward-wave-oscillator start current (8.7), reversed-Cherenkov wakefields in a wagon-wheel metamaterial (8.8)
@@ -475,7 +476,7 @@ example: [`EXAMPLES.md`](EXAMPLES.md).
 - [x] Merged: [PR #112](https://github.com/ImpedanCEI/Wakis/pull/112): fix the accumulator in the 3D wake-potential integration (`calc_long_WP_3d`)
 - [x] Merged: [PR #113](https://github.com/ImpedanCEI/Wakis/pull/113): second-order plane-wave gradient (Panofsky–Wenzel) on graded meshes
 - [ ] Open: [PR #118](https://github.com/ImpedanCEI/Wakis/pull/118): float32 NumPy 1/2 fix (issue #114)
-- [ ] Open: [PR #119](https://github.com/ImpedanCEI/Wakis/pull/119): `get_abs` collocation fix (issue #116)
+- [ ] Open: [PR #119](https://github.com/ImpedanCEI/Wakis/pull/119): `get_abs` collocation fix (issue #116); reworked to use the `Field` coordinates the maintainer added in #117, at their request
 - [ ] Open: [PR #120](https://github.com/ImpedanCEI/Wakis/pull/120): physics-guide wake definitions (issue #16)
 - [ ] Open: [PR #121](https://github.com/ImpedanCEI/Wakis/pull/121): PML matched to the background material (issue #33)
 - [x] Analysis and tests offered on [PR #105](https://github.com/ImpedanCEI/Wakis/pull/105) (high-side PEC and dual-grid metrics) and [issue #62](https://github.com/ImpedanCEI/Wakis/issues/62) (wake integration)
