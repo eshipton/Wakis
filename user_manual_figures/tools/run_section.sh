@@ -22,6 +22,23 @@ if [ -f /work/pbb/PaperBananaBench.zip ]; then
   if [ -n "$REF" ]; then
     mkdir -p /work/pva/data && ln -sfn "$(dirname "$(dirname "$REF")")" /work/pva/data/PaperBananaBench
     echo "retrieval references: $REF"
+    # Drop or repair reference entries whose image file is missing (some names differ only by Unicode form).
+    /work/pva-venv/bin/python - "$REF" <<'PY'
+import json, sys, unicodedata
+from pathlib import Path
+ref = Path(sys.argv[1]); root = ref.parent
+norm = lambda s: unicodedata.normalize("NFKC", s).replace("\u2011", "-").replace("\u2010", "-")
+files = {norm(str(p.relative_to(root))): str(p.relative_to(root)) for p in root.rglob("*") if p.is_file()}
+items = json.loads(ref.read_text(encoding="utf-8")); keep = []; fixed = 0
+for it in items:
+    rel = it.get("path_to_gt_image", "")
+    if (root / rel).exists():
+        keep.append(it)
+    elif norm(rel) in files:
+        it["path_to_gt_image"] = files[norm(rel)]; keep.append(it); fixed += 1
+ref.write_text(json.dumps(keep, ensure_ascii=False), encoding="utf-8")
+print(f"ref.json: kept {len(keep)} of {len(items)} ({fixed} paths repaired)")
+PY
   else
     echo "no diagram/ref.json in PaperBananaBench.zip; retrieval disabled"
   fi
