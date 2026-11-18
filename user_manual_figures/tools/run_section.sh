@@ -17,7 +17,7 @@ from huggingface_hub import hf_hub_download
 hf_hub_download("dwzhu/PaperBananaBench", "PaperBananaBench.zip", repo_type="dataset", local_dir="/work/pbb")
 PY
 if [ -f /work/pbb/PaperBananaBench.zip ]; then
-  (cd /work/pbb && unzip -q PaperBananaBench.zip) || true
+  /work/pva-venv/bin/python -c "import zipfile; zipfile.ZipFile('/work/pbb/PaperBananaBench.zip').extractall('/work/pbb')" || true
   REF=$(find /work/pbb -path '*diagram/ref.json' | head -1 || true)
   if [ -n "$REF" ]; then
     mkdir -p /work/pva/data && ln -sfn "$(dirname "$(dirname "$REF")")" /work/pva/data/PaperBananaBench

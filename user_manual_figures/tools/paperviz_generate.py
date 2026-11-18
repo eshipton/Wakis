@@ -23,8 +23,11 @@ from pathlib import Path
 
 TEXT_MODELS = ["gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro"]
 IMAGE_MODELS = [
-    "gemini-3.1-flash-image-preview",
+    "gemini-3-pro-image",
     "gemini-3-pro-image-preview",
+    "gemini-3.1-flash-image",
+    "gemini-3.1-flash-image-preview",
+    "gemini-3-flash-image-preview",
     "gemini-2.5-flash-image",
 ]
 
