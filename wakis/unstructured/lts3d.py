@@ -23,7 +23,7 @@ import numpy as np
 import scipy.linalg as la
 import scipy.sparse as sp
 from scipy.optimize import brentq
-from scipy.sparse.linalg import LinearOperator, eigsh, splu
+from scipy.sparse.linalg import ArpackNoConvergence, LinearOperator, eigsh, splu
 
 from ..subgrid3d.lts import positivity_limit
 from .gpu import massless_schur_operator
@@ -841,6 +841,54 @@ class TetLTS:
         return out
 
 
+# Lanczos settings for the extreme-eigenvalue certificates. A block of K_TOP Ritz
+# pairs converges quickly when the top of the spectrum holds (near-)degenerate
+# pairs, as on rotationally symmetric meshes; with k = 1 such cases needed more
+# than 20 h on a 3e4-tet pillbox at tol = 1e-10 (studies/unstructured-lts3d,
+# task 374). MAXITER bounds the implicit restarts; non-convergence is an error.
+K_TOP = 3
+# Final-certificate Lanczos tolerance. `is_stable` then requires rho < 1 - 1e-7;
+# the auto step sits at 0.995 of the bisected limit, so rho - 1 is ~5e-3, far
+# larger than the Ritz error (~tol). Was 1e-10 (no measurable benefit, much slower).
+CERT_TOL = 1e-8
+NCV_TOP = 60
+MAXITER_TOP = 3000
+
+
+def _extreme_eig(A, n, which, tol, v0, M=None, Minv=None, want_vec=True):
+    """Extreme eigenvalue of ``A`` (or of the pencil ``(A, M)``) from a Lanczos block.
+
+    Returns the largest (``which="LA"``) or smallest (``"SA"``) of ``K_TOP`` Ritz
+    values and, if requested, its Ritz vector. Raises `RuntimeError` when ARPACK
+    does not converge within ``MAXITER_TOP`` restarts.
+    """
+    k = max(1, min(K_TOP, n - 1))
+    ncv = min(n, max(NCV_TOP, 2 * k + 1))
+    try:
+        res = eigsh(
+            A,
+            k=k,
+            M=M,
+            Minv=Minv,
+            which=which,
+            tol=tol,
+            v0=v0,
+            ncv=ncv,
+            maxiter=MAXITER_TOP,
+            return_eigenvectors=want_vec,
+        )
+    except ArpackNoConvergence as exc:
+        raise RuntimeError(
+            f"Lanczos did not converge for the LTS {which} eigenvalue "
+            f"(n={n}, k={k}, ncv={ncv}, tol={tol:g}, maxiter={MAXITER_TOP}); "
+            f"converged Ritz values: {np.sort(np.real(exc.eigenvalues))}"
+        ) from exc
+    lam, vec = res if want_vec else (res, None)
+    lam = np.real(np.asarray(lam))
+    i = int(np.argmax(lam)) if which == "LA" else int(np.argmin(lam))
+    return float(lam[i]), (None if vec is None else vec[:, i])
+
+
 def stability_ratio(lts, tol=1e-10, which="LA", return_mode=False):
     """
     Generalized spectral stability ratio ``rho = (dt / 2) sqrt(lambda_max(S_0, M))``.
@@ -877,14 +925,13 @@ def stability_ratio(lts, tol=1e-10, which="LA", return_mode=False):
             return sc * (lts.K @ lts.apply(sc * x))
 
         op = LinearOperator((n, n), matvec=mv, dtype=float)
-        lam, vec = eigsh(op, k=1, which=which, tol=tol, v0=v0, ncv=min(n, 40))
-        lam = float(np.real(lam[0]))
+        lam, x = _extreme_eig(op, n, which, tol, v0)
         if which != "LA":
             return lam
         rho = 0.5 * lts.dt_s * np.sqrt(max(lam, 0.0))
         if not return_mode:
             return float(rho)
-        w = np.abs(vec[:, 0]) ** 2
+        w = np.abs(x) ** 2
         w_sum = float(w.sum())
         return float(rho), (w / w_sum if w_sum > 0 else w)
 
@@ -897,23 +944,12 @@ def stability_ratio(lts, tol=1e-10, which="LA", return_mode=False):
 
     S_op = LinearOperator((n, n), matvec=s_mv, dtype=float)
     Minv_op = LinearOperator((n, n), matvec=minv_mv, dtype=float)
-    lam, vec = eigsh(
-        S_op,
-        k=1,
-        M=lts.M,
-        Minv=Minv_op,
-        which=which,
-        tol=tol,
-        v0=v0,
-        ncv=min(n, 40),
-    )
-    lam = float(np.real(lam[0]))
+    lam, x = _extreme_eig(S_op, n, which, tol, v0, M=lts.M, Minv=Minv_op)
     if which != "LA":
         return lam
     rho = 0.5 * lts.dt_s * np.sqrt(max(lam, 0.0))
     if not return_mode:
         return float(rho)
-    x = vec[:, 0]
     w = np.abs(x * (lts.M @ x))
     w_sum = float(w.sum())
     return float(rho), (w / w_sum if w_sum > 0 else w)
@@ -968,15 +1004,7 @@ def level_margins(lts, tol=1e-8):
                 return sc * (d.K_FF @ lts._R(lv, sc * x))
 
             op = LinearOperator((nF, nF), matvec=mv, dtype=float)
-            mu = eigsh(
-                op,
-                k=1,
-                which="LA",
-                tol=tol,
-                v0=v0,
-                ncv=min(nF, 40),
-                return_eigenvectors=False,
-            )[0]
+            mu, _ = _extreme_eig(op, nF, "LA", tol, v0, want_vec=False)
         else:
 
             def s_mv(x, d=d, lv=lv):
@@ -988,17 +1016,9 @@ def level_margins(lts, tol=1e-8):
 
             S_op = LinearOperator((nF, nF), matvec=s_mv, dtype=float)
             Minv_op = LinearOperator((nF, nF), matvec=minv_mv, dtype=float)
-            mu = eigsh(
-                S_op,
-                k=1,
-                M=d.M_ll,
-                Minv=Minv_op,
-                which="LA",
-                tol=tol,
-                v0=v0,
-                ncv=min(nF, 40),
-                return_eigenvectors=False,
-            )[0]
+            mu, _ = _extreme_eig(
+                S_op, nF, "LA", tol, v0, M=d.M_ll, Minv=Minv_op, want_vec=False
+            )
         out.append(float(d.tau2 * np.real(mu) / xp_))
     return out
 
@@ -1183,7 +1203,7 @@ def setup_lts(solver, opts, dt_s=None):
     dt_global = float(solver.dt_max)
     if isinstance(opts, TetLTS):
         t0 = time.perf_counter()
-        ok, rho, marg = is_stable(opts, tol=1e-10)
+        ok, rho, marg = is_stable(opts, tol=CERT_TOL)
         t_cert = time.perf_counter() - t0
         if not ok:
             raise ValueError(
@@ -1423,9 +1443,9 @@ def setup_lts(solver, opts, dt_s=None):
                 f"LTS repair loop failed to stabilize within {max_iter} iterations"
             )
 
-    # Final strict certificate at tol=1e-10 (section 3.7)
+    # Final strict certificate (section 3.7) at CERT_TOL
     t0 = time.perf_counter()
-    ok_final, rho_final, marg_final = is_stable(lts, tol=1e-10)
+    ok_final, rho_final, marg_final = is_stable(lts, tol=CERT_TOL)
     t_cert += time.perf_counter() - t0
     if not ok_final:
         raise ValueError(

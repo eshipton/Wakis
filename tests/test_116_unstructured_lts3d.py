@@ -27,6 +27,7 @@ from wakis.unstructured.adjoint import (
 )
 from wakis.unstructured.gpu import DeviceStepper, massless_schur_operator
 from wakis.unstructured.lts import chebyshev_coefficients
+import wakis.unstructured.lts3d as lts3d_mod
 from wakis.unstructured.lts3d import (
     TetLTS,
     effective_stiffness,
@@ -1255,3 +1256,38 @@ def test_lts_large_massless_block():
     zero_lvl = np.zeros(s.free.size, dtype=int)
     lts = TetLTS(s, s.dt, zero_lvl, [])
     assert lts.C_eff_nnz > 0
+
+
+# ------------------------------------------------------------------ Lanczos block certificate
+def test_extreme_eig_returns_extreme_of_block():
+    """`_extreme_eig` returns the largest Ritz value of the K_TOP block, also when the top is degenerate.
+
+    eigsh returns the block in ascending order, so taking the first entry (the old k = 1
+    habit) would return 4.0 here instead of 5.0; the smallest is checked the same way.
+    """
+    vals = np.concatenate([np.linspace(0.5, 4.0, 197), [5.0, 5.0, 5.0 - 1e-12]])
+    rng = np.random.default_rng(7)
+    Q, _ = np.linalg.qr(rng.standard_normal((vals.size, vals.size)))
+    A = (Q * vals) @ Q.T
+    op = LinearOperator(A.shape, matvec=lambda x: A @ x, dtype=float)
+    v0 = rng.standard_normal(vals.size)
+    lam_max, vec = lts3d_mod._extreme_eig(op, vals.size, "LA", 1e-12, v0)
+    lam_min, _ = lts3d_mod._extreme_eig(op, vals.size, "SA", 1e-12, v0, want_vec=False)
+    res = np.linalg.norm(A @ vec - lam_max * vec) / np.linalg.norm(vec)
+    print(f"lam_max={lam_max:.15f} lam_min={lam_min:.15f} residual={res:.2e}")
+    assert abs(lam_max - 5.0) <= 1e-10
+    assert abs(lam_min - 0.5) <= 1e-10
+    assert res <= 1e-8
+
+
+def test_extreme_eig_nonconvergence_is_an_error(monkeypatch):
+    """With the restart cap at 1 a clustered spectrum cannot converge: RuntimeError, not a silent value."""
+    vals = np.concatenate([np.linspace(0.0, 1.0, 600), 1.0 + 1e-9 * np.arange(1, 6)])
+    rng = np.random.default_rng(3)
+    Q, _ = np.linalg.qr(rng.standard_normal((vals.size, vals.size)))
+    A = (Q * vals) @ Q.T
+    op = LinearOperator(A.shape, matvec=lambda x: A @ x, dtype=float)
+    monkeypatch.setattr(lts3d_mod, "MAXITER_TOP", 1)
+    with pytest.raises(RuntimeError, match="Lanczos did not converge"):
+        lts3d_mod._extreme_eig(op, vals.size, "LA", 1e-14, rng.standard_normal(vals.size))
+
