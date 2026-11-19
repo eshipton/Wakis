@@ -126,59 +126,74 @@ def plot_levels(quick=False):
 
 
 def plot_cost(quick=False):
+    """Frequency error vs wall time per simulated ns (seed 1), Voronoi and Whitney arms.
+
+    Rows: Voronoi arms (top) and Whitney arms (bottom); columns: the two box cases.
+    Setup time is excluded here (see the setup-inclusive table in the guide).
+    """
     acc = _load("accuracy", quick=quick)
     records = acc["records"]
     comps = acc.get("comparisons", {})
 
-    fig, axes = plt.subplots(1, 2, figsize=(11.5, 4.3))
     cases = sorted({r["case"] for r in records})[:2]
     if len(cases) == 1:
         cases = [cases[0], cases[0]]
-
+    rows = [
+        ("Voronoi Hodge", ["G", "G-imp", "L", "L-imp", "L-dt1.5", "L-dt2.0", "L-dt3.0"], "L_vs_G"),
+        ("Whitney Hodge", ["GW", "LW-element", "LW-edge_rate"], "LW_edge_rate_vs_GW"),
+    ]
     style = {
-        "G": ("#1F2937", "o", "-"),
+        "G": ("#111827", "o", "-"),
         "G-imp": ("#059669", "s", "-"),
-        "G-ml3e-2": ("#7C3AED", "^", "--"),
-        "G-ml1e-1": ("#A855F7", "v", "--"),
         "L": ("#DC2626", "D", "-"),
+        "L-imp": ("#F472B6", "X", "-."),
         "L-dt1.5": ("#F59E0B", "P", ":"),
-        "L-imp": ("#10B981", "X", "-."),
-        "GW": ("#6B7280", "o", "--"),
+        "L-dt2.0": ("#0EA5E9", "^", "--"),
+        "L-dt3.0": ("#7C3AED", "v", "--"),
+        "GW": ("#111827", "o", "--"),
+        "LW-element": ("#F59E0B", "s", "-"),
         "LW-edge_rate": ("#2563EB", "d", "-"),
     }
 
-    for ax, case in zip(axes, cases):
-        arms = sorted({r["arm"] for r in records if r["case"] == case})
-        for arm in arms:
-            pts = [
-                r
-                for r in records
-                if r["case"] == case
-                and r["arm"] == arm
-                and r["seed"] == 1
-                and np.isfinite(r["err_td"])
-                and r["err_td"] > 0
-            ]
-            if not pts:
-                continue
-            pts.sort(key=lambda r: r["n_tets"])
-            xs = [r["wall_per_ns"] for r in pts]
-            ys = [r["err_td"] for r in pts]
-            col, mk, ls = style.get(arm, ("#374151", ".", "-"))
-            ax.loglog(xs, ys, marker=mk, ls=ls, color=col, label=arm, lw=1.3, ms=5)
+    fig, axes = plt.subplots(2, 2, figsize=(11.5, 8.0))
+    for i, (row_name, arms, comp_key) in enumerate(rows):
+        for j, case in enumerate(cases):
+            ax = axes[i, j]
+            for arm in arms:
+                pts = [
+                    r
+                    for r in records
+                    if r["case"] == case
+                    and r["arm"] == arm
+                    and r["seed"] == 1
+                    and np.isfinite(r["err_td"])
+                    and r["err_td"] > 0
+                ]
+                if not pts:
+                    continue
+                pts.sort(key=lambda r: r["n_tets"])
+                xs = [r["wall_per_ns"] for r in pts]
+                ys = [r["err_td"] for r in pts]
+                col, mk, ls = style[arm]
+                ax.loglog(xs, ys, marker=mk, ls=ls, color=col, label=arm, lw=1.4, ms=5.5)
+            c = comps.get(case, {}).get(comp_key, {})
+            g = c.get("median_gain")
+            gtxt = f"{g:.2f}x" if g is not None else c.get("status", "N/A")
+            label = comp_key.replace("_vs_", " vs ").replace("LW_edge_rate", "LW-edge_rate")
+            ax.set_title(f"{case}, {row_name}\n{label} at equal error: {gtxt} (setup excluded)", fontsize=9.5)
+            ax.set_xlabel("Wall time per simulated ns [s/ns]")
+            ax.set_ylabel(r"$|f_{\mathrm{td}}/f_{\mathrm{exact}} - 1|$")
+            ax.grid(True, which="major", alpha=0.3)
+            from matplotlib.ticker import NullFormatter
 
-        c_info = comps.get(case, {}).get("L_vs_G", {})
-        status = c_info.get("status", "N/A")
-        ax.set_xlabel("Wall time per simulated ns [s/ns]")
-        ax.set_ylabel(
-            r"Time-domain frequency error $|f_{\mathrm{td}}/f_{\mathrm{exact}} - 1|$"
-        )
-        ax.set_title(f"{case} (L vs G: {status})")
-        ax.legend(fontsize=7.5, loc="best")
+            ax.xaxis.set_minor_formatter(NullFormatter())
+            ax.yaxis.set_minor_formatter(NullFormatter())
+            if j == 1:
+                ax.legend(fontsize=8, loc="center left", bbox_to_anchor=(1.02, 0.5))
 
     fig.tight_layout()
     out = _out_path("lts3d_cost", quick=quick)
-    fig.savefig(out, dpi=160)
+    fig.savefig(out, dpi=160, bbox_inches="tight")
     plt.close(fig)
     return out
 
