@@ -1259,25 +1259,41 @@ def test_lts_large_massless_block():
 
 
 # ------------------------------------------------------------------ Lanczos block certificate
-def test_extreme_eig_returns_extreme_of_block():
-    """`_extreme_eig` returns the largest Ritz value of the K_TOP block, also when the top is degenerate.
-
-    eigsh returns the block in ascending order, so taking the first entry (the old k = 1
-    habit) would return 4.0 here instead of 5.0; the smallest is checked the same way.
-    """
-    vals = np.concatenate([np.linspace(0.5, 4.0, 197), [5.0, 5.0, 5.0 - 1e-12]])
-    rng = np.random.default_rng(7)
+def _sym_op(vals, seed):
+    rng = np.random.default_rng(seed)
     Q, _ = np.linalg.qr(rng.standard_normal((vals.size, vals.size)))
     A = (Q * vals) @ Q.T
-    op = LinearOperator(A.shape, matvec=lambda x: A @ x, dtype=float)
+    return A, LinearOperator(A.shape, matvec=lambda x: A @ x, dtype=float), rng
+
+
+def test_extreme_eig_returns_extreme_of_block():
+    """`_extreme_eig` returns the largest (smallest) Ritz value of the K_TOP block.
+
+    eigsh returns the block in ascending order, so taking the first entry (the old k = 1
+    habit) would return 4.7 here instead of 5.0; the smallest is checked the same way.
+    """
+    vals = np.concatenate([[0.2], np.linspace(0.5, 4.0, 197), [4.7, 5.0]])
+    A, op, rng = _sym_op(vals, 7)
     v0 = rng.standard_normal(vals.size)
     lam_max, vec = lts3d_mod._extreme_eig(op, vals.size, "LA", 1e-12, v0)
     lam_min, _ = lts3d_mod._extreme_eig(op, vals.size, "SA", 1e-12, v0, want_vec=False)
     res = np.linalg.norm(A @ vec - lam_max * vec) / np.linalg.norm(vec)
-    print(f"lam_max={lam_max:.15f} lam_min={lam_min:.15f} residual={res:.2e}")
+    print(f"K_TOP={lts3d_mod.K_TOP} lam_max={lam_max:.15f} lam_min={lam_min:.15f} residual={res:.2e}")
+    assert lts3d_mod.K_TOP >= 2
     assert abs(lam_max - 5.0) <= 1e-10
-    assert abs(lam_min - 0.5) <= 1e-10
+    assert abs(lam_min - 0.2) <= 1e-10
     assert res <= 1e-8
+
+
+def test_extreme_eig_degenerate_top_pair_converges():
+    """An exactly degenerate top pair (rotationally symmetric meshes) converges with the K_TOP block."""
+    vals = np.concatenate([np.linspace(0.5, 4.0, 198), [5.0, 5.0]])
+    A, op, rng = _sym_op(vals, 11)
+    lam_max, _ = lts3d_mod._extreme_eig(
+        op, vals.size, "LA", 1e-10, rng.standard_normal(vals.size), maxiter=lts3d_mod.MAXITER_TIGHT
+    )
+    print(f"lam_max={lam_max:.15f}")
+    assert abs(lam_max - 5.0) <= 1e-8
 
 
 def test_extreme_eig_nonconvergence_is_an_error(monkeypatch):
@@ -1290,4 +1306,44 @@ def test_extreme_eig_nonconvergence_is_an_error(monkeypatch):
     monkeypatch.setattr(lts3d_mod, "MAXITER_TOP", 1)
     with pytest.raises(RuntimeError, match="Lanczos did not converge"):
         lts3d_mod._extreme_eig(op, vals.size, "LA", 1e-14, rng.standard_normal(vals.size))
+
+
+class _LadderLTS:
+    """Stand-in for `certify`: records the (tol, maxiter) of each `is_stable` call."""
+
+
+def test_certify_falls_back_to_floor_and_widens_margin(monkeypatch):
+    """`certify` retries at CERT_TOL_FLOOR when the tight solve does not converge, and reports it.
+
+    The fake `is_stable` fails at CERT_TOL; with the ladder removed (no fallback) this raises.
+    """
+    calls = []
+
+    def fake_is_stable(lts, tol=1e-5, maxiter=None):
+        calls.append((tol, maxiter))
+        if tol < lts3d_mod.CERT_TOL_FLOOR:
+            raise RuntimeError("Lanczos did not converge (test)")
+        return True, 0.995, [0.5]
+
+    monkeypatch.setattr(lts3d_mod, "is_stable", fake_is_stable)
+    ok, rho, marg, tol_used = lts3d_mod.certify(_LadderLTS())
+    print(f"calls={calls} tol_used={tol_used}")
+    assert calls == [
+        (lts3d_mod.CERT_TOL, lts3d_mod.MAXITER_TIGHT),
+        (lts3d_mod.CERT_TOL_FLOOR, lts3d_mod.MAXITER_TOP),
+    ]
+    assert ok and tol_used == lts3d_mod.CERT_TOL_FLOOR
+    # the floor margin g = 10 * tol must stay well inside the 0.995 auto-step back-off
+    assert 10 * lts3d_mod.CERT_TOL_FLOOR < 0.1 * (1 - 0.995)
+
+
+def test_certify_floor_nonconvergence_is_an_error(monkeypatch):
+    """If the floor solve also fails, `certify` raises instead of returning a value."""
+
+    def fake_is_stable(lts, tol=1e-5, maxiter=None):
+        raise RuntimeError("Lanczos did not converge (test)")
+
+    monkeypatch.setattr(lts3d_mod, "is_stable", fake_is_stable)
+    with pytest.raises(RuntimeError, match="did not converge"):
+        lts3d_mod.certify(_LadderLTS())
 
