@@ -30,6 +30,13 @@ from matplotlib.patches import (
 )  # noqa: E402
 
 from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
+from wakis.conformal import (  # noqa: E402
+    MERGE_THRESHOLD,
+    _edge_potential,
+    _redistribution,
+    _section_areas_full,
+)
+from wakis.templates import Sheet  # noqa: E402
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
 ORANGE, LORANGE = "#e8873a", "#fbe0c8"
@@ -1144,12 +1151,12 @@ def fig6_3(outroot):
 
     # ---- RIGHT PANEL: Automatic STL feature snapping ----
     fig.text(
-        0.755,
+        0.745,
         0.94,
         "Automatic STL feature snapping (use_mesh_refinement=True)",
         ha="center",
         va="center",
-        fontsize=15.0,
+        fontsize=13.5,
         weight="bold",
     )
     ax_r = fig.add_axes([0.53, 0.04, 0.45, 0.86])
@@ -1224,7 +1231,7 @@ def fig6_3(outroot):
             title,
             ha="left",
             va="bottom",
-            fontsize=12.0,
+            fontsize=11.0,
             weight="bold",
             color="black",
         )
@@ -1234,7 +1241,7 @@ def fig6_3(outroot):
             note,
             ha="right",
             va="bottom",
-            fontsize=11.5,
+            fontsize=10.5,
             weight="bold",
             color=ncol,
         )
@@ -1296,9 +1303,561 @@ def fig6_3(outroot):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 6.4
+def fig6_4(outroot):
+    """Figure 6.4: Conformal Dey-Mittra PEC cut cells, (2,-1) stabilization, and thin sheets."""
+    out_dir = outroot / "section6"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Left panel geometry: unit primary cell [0,1]x[0,1] cut by circular PEC arc
+    # Circle centred at (-0.25, 0.78) with radius R = 0.85 encloses left edge x=0 (l_left = 0)
+    # and cuts top edge y=1 at x_top and bottom edge y=0 at x_bot.
+    xc, yc, rad = -0.25, 0.78, 0.85
+    x_top = xc + np.sqrt(rad**2 - (1.0 - yc) ** 2)
+    x_bot = xc + np.sqrt(rad**2 - (0.0 - yc) ** 2)
+    y_grid = np.linspace(0.0, 1.0, 4001)
+    x_arc = xc + np.sqrt(rad**2 - (y_grid - yc) ** 2)
+    pec_area_num = np.trapezoid(x_arc, y_grid)
+    s_f_open = 1.0 - pec_area_num
+    # Check against wakis.conformal._section_areas_full on polygonal PEC contour
+    n_seg = 400
+    th_a = np.arctan2(0.0 - yc, x_bot - xc)
+    th_b = np.arctan2(1.0 - yc, x_top - xc)
+    th = np.linspace(th_a, th_b, n_seg)
+    arc_pts = np.column_stack([xc + rad * np.cos(th), yc + rad * np.sin(th)])
+    poly = np.vstack([arc_pts, [[-0.5, 1.2], [-0.5, -0.2]]])
+    p_seg = poly
+    q_seg = np.roll(poly, -1, axis=0)
+    area_w, lu_w, lv_w = _section_areas_full(
+        np.zeros(len(p_seg), dtype=int),
+        p_seg,
+        q_seg,
+        1,
+        np.array([0.0, 1.0]),
+        np.array([0.0, 1.0]),
+    )
+    assert np.isclose(1.0 - area_w[0, 0, 0], s_f_open, rtol=1e-4)
+    assert np.isclose(1.0 - lu_w[0, 0, 0], 1.0 - x_bot, rtol=1e-4)  # bottom open length
+    assert np.isclose(1.0 - lu_w[0, 1, 0], 1.0 - x_top, rtol=1e-4)  # top open length
+    assert np.isclose(
+        1.0 - lv_w[0, 0, 0], 0.0, atol=1e-12
+    )  # left edge enclosed in PEC: l_k = 0
+
+    # 2. Centre panel verification: (2, -1) small-face stabilization via wakis.conformal._redistribution
+    # 3x2x1 grid where face (0, 1, 0) has small open area S_u = 0.08 < 0.5 * A_stab = 0.25
+    shape = (3, 2, 1)
+    cell_L = [np.ones(shape) for _ in range(3)]
+    L_open = [np.ones(shape) for _ in range(3)]
+    A_open = [np.ones(shape) for _ in range(3)]
+    # Row j=1 normal-z face: col 0 is unstable sliver (S_u = 0.08), cols 1 and 2 are stable (A = 1.0)
+    A_open[2][0, 1, 0] = 0.08
+    L_open[0][0, 1, 0] = 0.16
+    ops, n_unst = _redistribution(L_open, A_open, cell_L, [0, 0, 0], MERGE_THRESHOLD)
+    G_z = ops[2].toarray()
+    a_vec = A_open[2].ravel(order="F")
+    # Assert G = T^T diag(1/A_hat) T is symmetric positive semi-definite and reproduces uniform H = 1
+    assert n_unst == 1
+    assert np.allclose(G_z, G_z.T, atol=1e-15)
+    assert np.min(np.linalg.eigvalsh(G_z)) >= -1e-14
+    assert np.allclose(G_z @ a_vec, np.ones_like(a_vec), atol=1e-14)
+    # Check exact receiving areas A_hat_1 = 1 + 2 * 0.08, A_hat_2 = 1 - 1 * 0.08 (user_manual.md line 1222)
+    # In Fortran order on shape (3, 2, 1): u=(0,1,0)->3, n_1=(1,1,0)->4, n_2=(2,1,0)->5
+    a_hat_1 = 1.0 + 2.0 * 0.08
+    a_hat_2 = 1.0 - 1.0 * 0.08
+    assert np.isclose(G_z[4, 4], 1.0 / a_hat_1) and np.isclose(G_z[4, 3], 2.0 / a_hat_1)
+    assert np.isclose(G_z[5, 5], 1.0 / a_hat_2) and np.isclose(
+        G_z[5, 3], -1.0 / a_hat_2
+    )
+    assert np.isclose(G_z[3, 3], 4.0 / a_hat_1 + 1.0 / a_hat_2)
+
+    # 3. Right panel verification: Meixner r^{-1/2} edge singularity & Sheet (user_manual.md lines 1235-1249)
+    patch = Sheet(center=(0.0, 0.0, 1.5e-3), size=(30e-3, 40e-3, 0.0))
+    grid_sh = GridFIT3D(
+        xmin=-30e-3,
+        xmax=30e-3,
+        ymin=-35e-3,
+        ymax=35e-3,
+        zmin=0.0,
+        zmax=15e-3,
+        Nx=12,
+        Ny=14,
+        Nz=10,
+        sheets={"patch": patch.to_pyvista()},
+        sheet_edge_correction=True,
+        verbose=0,
+    )
+    solver_sh = SolverFIT3D(grid_sh, verbose=0)
+    # Potential F(s, 0) = sqrt(s) outside edge (s > 0) -> dF/ds = 0.5 * s^{-1/2}, integral over [0, dx] is sqrt(dx)
+    s_pts = np.linspace(0.04, 2.0, 300)
+    pot_vals = _edge_potential(s_pts, 0.0).real
+    assert np.allclose(pot_vals, np.sqrt(s_pts))
+    assert np.any(solver_sh.conformal_ieps_factor != 1.0) and np.any(
+        solver_sh.conformal_ieps_factor > 0.0
+    )
+
+    fig = plt.figure(figsize=(W, H))
+
+    fig.text(
+        0.165,
+        0.93,
+        "1. Dey–Mittra PEC cut cell",
+        ha="center",
+        va="center",
+        fontsize=15.0,
+        weight="bold",
+    )
+    fig.text(
+        0.50,
+        0.93,
+        "2. (2, −1) small-face stabilization",
+        ha="center",
+        va="center",
+        fontsize=15.0,
+        weight="bold",
+    )
+    fig.text(
+        0.835,
+        0.93,
+        "3. Thin Sheet & Meixner edge correction",
+        ha="center",
+        va="center",
+        fontsize=14.5,
+        weight="bold",
+    )
+
+    # ---- PANEL 1: Dey-Mittra PEC cut cell ----
+    ax1 = fig.add_axes([0.02, 0.04, 0.30, 0.85])
+    bare(ax1)
+
+    # Vacuum aperture polygon inside [0, 1] x [0, 1]
+    vac_poly = np.vstack([arc_pts, [[1.0, 1.0], [1.0, 0.0]]])
+    ax1.add_patch(
+        Polygon(vac_poly, closed=True, fc=LBLUE, ec="none", alpha=0.80, zorder=1)
+    )
+    # PEC region inside [0, 1] x [0, 1]
+    pec_poly = np.vstack([[[0.0, 0.0], [x_bot, 0.0]], arc_pts, [[0.0, 1.0]]])
+    ax1.add_patch(
+        Polygon(
+            pec_poly,
+            closed=True,
+            fc=LGREY,
+            ec=GREY,
+            lw=1.5,
+            hatch="///",
+            zorder=2,
+        )
+    )
+    ax1.plot(arc_pts[:, 0], arc_pts[:, 1], color=GREY, lw=2.8, zorder=4)
+    ax1.text(
+        0.16,
+        0.74,
+        "PEC:\n" + r"$\mathbf{E} = \mathbf{0}$",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=GREY, lw=1.2, alpha=0.92),
+        zorder=6,
+    )
+
+    # Enclosed left edge (l_k = 0) and enclosed portions of top/bottom edges in red dashed
+    ax1.plot([0.0, 0.0], [0.0, 1.0], color=RED, lw=3.6, ls="--", zorder=5)
+    ax1.plot([0.0, x_top], [1.0, 1.0], color=RED, lw=2.4, ls="--", zorder=4)
+    ax1.plot([0.0, x_bot], [0.0, 0.0], color=RED, lw=2.4, ls="--", zorder=4)
+    ax1.text(
+        -0.06,
+        0.48,
+        r"$l_k = 0$" + "\n" + r"$\Rightarrow \mathrm{ieps} = 0$",
+        ha="right",
+        va="center",
+        fontsize=12.0,
+        color=RED,
+        weight="bold",
+    )
+
+    # Vacuum-open portions of primary edges in thick blue
+    ax1.plot([x_bot, 1.0], [0.0, 0.0], color=BLUE, lw=4.5, zorder=5)
+    ax1.plot([x_top, 1.0], [1.0, 1.0], color=BLUE, lw=4.5, zorder=5)
+    ax1.plot([1.0, 1.0], [0.0, 1.0], color=BLUE, lw=4.5, zorder=5)
+    for px, py in ((x_bot, 0.0), (x_top, 1.0), (1.0, 0.0), (1.0, 1.0)):
+        ax1.add_patch(Circle((px, py), 0.025, color=BLUE, zorder=6))
+
+    ax1.text(
+        0.54,
+        -0.11,
+        r"$l_k \in [0, |L_k|]$",
+        ha="center",
+        va="top",
+        fontsize=13.5,
+        color=BLUE,
+        weight="bold",
+    )
+    ax1.text(
+        0.66,
+        0.34,
+        r"$S_f \in [0, |A_f|]$" + "\n" + r"$\mathrm{iA}_f = 1/S_f$",
+        ha="center",
+        va="center",
+        fontsize=13.0,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=BLUE, lw=1.0, alpha=0.92),
+        zorder=6,
+    )
+
+    box(
+        ax1,
+        (0.42, -0.44),
+        1.35,
+        0.32,
+        r"$\mathbf{D}_s = \mathrm{diag}(l_k),\ \ \mathrm{iA}_f = 1/S_f$",
+        LBLUE,
+        BLUE,
+        fs=13.5,
+        lw=1.6,
+        r=0.06,
+    )
+
+    ax1.set_xlim(-0.44, 1.18)
+    ax1.set_ylim(-0.70, 1.24)
+
+    # Vertical dividers
+    fig.add_artist(
+        plt.Line2D(
+            [0.33, 0.33], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+    fig.add_artist(
+        plt.Line2D(
+            [0.67, 0.67], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+
+    # ---- PANEL 2: (2, -1) small-face stabilization ----
+    ax2 = fig.add_axes([0.34, 0.04, 0.32, 0.85])
+    bare(ax2)
+
+    # Draw 3 x 2 Cartesian grid patch [0, 3] x [0.45, 2.05] (cell height 0.8, width 1.0)
+    y_b, ch = 0.45, 0.80
+    # Top row (j=1): col 0 has sliver open area S_u in [0.75, 1.0] x [y_b+ch, y_b+2*ch]
+    pec_patch = [
+        (0.0, y_b + 0.25 * ch),
+        (0.75, y_b + ch),
+        (0.88, y_b + 2 * ch),
+        (0.0, y_b + 2 * ch),
+    ]
+    sliver_poly = [
+        (0.75, y_b + ch),
+        (1.0, y_b + ch),
+        (1.0, y_b + 2 * ch),
+        (0.88, y_b + 2 * ch),
+    ]
+    ax2.add_patch(Polygon(sliver_poly, closed=True, fc=LRED, ec=RED, lw=1.8, zorder=2))
+    ax2.add_patch(
+        Rectangle((1.0, y_b + ch), 1.0, ch, fc=LGREEN, ec=GREEN, lw=1.8, zorder=1)
+    )
+    ax2.add_patch(
+        Rectangle((2.0, y_b + ch), 1.0, ch, fc=LGREEN, ec=GREEN, lw=1.8, zorder=1)
+    )
+    ax2.add_patch(
+        Rectangle((0.0, y_b), 3.0, ch, fc=LBLUE, ec="none", alpha=0.35, zorder=0)
+    )
+    ax2.add_patch(
+        Polygon(
+            pec_patch,
+            closed=True,
+            fc=LGREY,
+            ec=GREY,
+            lw=2.0,
+            hatch="///",
+            zorder=3,
+        )
+    )
+    ax2.text(
+        0.34,
+        y_b + 1.45 * ch,
+        "PEC",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec=GREY, lw=1.0),
+        zorder=5,
+    )
+
+    for i in range(4):
+        ax2.plot(
+            [float(i), float(i)], [y_b, y_b + 2 * ch], color=BLUE, lw=1.8, zorder=4
+        )
+    for j in range(3):
+        ax2.plot([0.0, 3.0], [y_b + j * ch, y_b + j * ch], color=BLUE, lw=1.8, zorder=4)
+
+    ax2.text(
+        1.5,
+        y_b + 1.42 * ch,
+        "neighbour 1\n" + r"$(n_1)$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=GREEN,
+        weight="bold",
+        zorder=5,
+    )
+    ax2.text(
+        2.5,
+        y_b + 1.42 * ch,
+        "neighbour 2\n" + r"$(n_2)$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=GREEN,
+        weight="bold",
+        zorder=5,
+    )
+    ax2.text(
+        0.62,
+        y_b + 0.48 * ch,
+        "unstable face $u$:\n" + r"$S_u < 0.5\,A_{\mathrm{stab}}$",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=RED,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.16", fc=LRED, ec=RED, lw=1.2),
+        zorder=6,
+    )
+    arrow(
+        ax2,
+        (0.75, y_b + 0.70 * ch),
+        (0.90, y_b + 1.25 * ch),
+        RED,
+        lw=1.8,
+        ms=14,
+        z=6,
+    )
+
+    # Two curved green arrows from face u to n_1 (+2) and n_2 (-1)
+    y_top_row = y_b + 1.88 * ch
+    arrow(
+        ax2, (0.92, y_top_row), (1.45, y_top_row), GREEN, lw=2.4, rad=-0.45, ms=16, z=7
+    )
+    badge(ax2, (1.20, y_b + 2.22 * ch), "+2", fc=GREEN, fs=12.0, pad=0.22, z=8)
+
+    arrow(
+        ax2,
+        (0.92, y_top_row + 0.04),
+        (2.48, y_top_row + 0.04),
+        ORANGE,
+        lw=2.2,
+        rad=-0.38,
+        ms=16,
+        z=6,
+    )
+    badge(ax2, (1.85, y_b + 2.38 * ch), "−1", fc=ORANGE, fs=12.0, pad=0.22, z=8)
+    ax2.text(
+        2.15,
+        y_b + 0.48 * ch,
+        "weight 1 if only\none neighbour",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color=GREY,
+        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec=LGREY, lw=1.0, alpha=0.92),
+        zorder=5,
+    )
+
+    # Equations below the grid (user_manual.md lines 1221-1224)
+    box(ax2, (1.5, -0.35), 3.22, 1.32, "", LGREEN, GREEN, lw=1.8, r=0.07, z=1)
+    ax2.text(
+        1.5,
+        0.13,
+        r"$A_{\mathrm{stab}} = \max_i(l_i h_i)/2,\ \ \mathrm{MERGE\_THRESHOLD} = 0.5$",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color="black",
+        zorder=4,
+    )
+    ax2.text(
+        1.5,
+        -0.14,
+        r"$\hat{A}_n = A_n + \sum_u T_{nu} A_u$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color="black",
+        zorder=4,
+    )
+    ax2.text(
+        1.5,
+        -0.41,
+        r"$\mathbf{G} = \mathbf{T}^T\,\mathrm{diag}(1/\hat{A})\,\mathbf{T}$"
+        + "  (symmetric positive semi-definite)",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color="black",
+        zorder=4,
+    )
+    badge(
+        ax2,
+        (1.5, -0.76),
+        r"stable $\Delta t = 0.85\text{–}0.97$ of Yee limit (studies/conformal-pec-mask/)",
+        fc=GREEN,
+        fs=9.8,
+        pad=0.22,
+    )
+
+    ax2.set_xlim(-0.20, 3.20)
+    ax2.set_ylim(-1.10, 2.55)
+
+    # ---- PANEL 3: Thin Sheet & Meixner edge correction ----
+    ax3 = fig.add_axes([0.68, 0.04, 0.30, 0.85])
+    bare(ax3)
+
+    # 2D (x, z) grid cross-section: x in [-1.0, 2.0], z in [0.35, 1.75]
+    # z_sh = 1.05 corresponds to z = 1.5 mm plane
+    z_lo = 0.35
+    dz_g = 0.70
+    z_sh = z_lo + dz_g
+    # Highlight primary face immediately outside the sharp edge x in [0, dx] = [0, 1]
+    ax3.add_patch(
+        Rectangle(
+            (0.0, z_lo),
+            1.0,
+            2 * dz_g,
+            fc=LORANGE,
+            ec=ORANGE,
+            lw=1.8,
+            alpha=0.80,
+            zorder=1,
+        )
+    )
+    ax3.text(
+        0.50,
+        z_lo + 0.34,
+        "primary face\noutside edge\n" + r"$x \in [0, \Delta x]$",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color=ORANGE,
+        weight="bold",
+        zorder=5,
+    )
+
+    # Grid lines
+    for xv, lab in (
+        (-1.0, r"$-\Delta x$"),
+        (0.0, r"$0$"),
+        (1.0, r"$\Delta x$"),
+        (2.0, r"$2\Delta x$"),
+    ):
+        ax3.plot(
+            [xv, xv],
+            [z_lo - 0.06, z_lo + 2 * dz_g + 0.06],
+            color=BLUE,
+            lw=1.6,
+            zorder=2,
+        )
+        ax3.text(xv, z_lo - 0.12, lab, ha="center", va="top", fontsize=12.0, color=BLUE)
+    for zv in (z_lo, z_sh, z_lo + 2 * dz_g):
+        ax3.plot([-1.06, 2.06], [zv, zv], color=BLUE, lw=1.6, zorder=2)
+    ax3.text(
+        -1.10,
+        z_sh,
+        r"$z = 1.5\mathrm{\ mm}$",
+        ha="right",
+        va="center",
+        fontsize=11.0,
+        color=GREY,
+        weight="bold",
+    )
+
+    # Zero-thickness metallic sheet at z = 1.5 mm, x <= 0
+    ax3.plot(
+        [-1.04, 0.0], [z_sh, z_sh], color=GREY, lw=7.0, solid_capstyle="butt", zorder=6
+    )
+    ax3.add_patch(Circle((0.0, z_sh), 0.055, color=RED, zorder=7))
+    ax3.text(
+        -0.50,
+        z_lo + 0.34,
+        "zero-thickness\nPEC sheet\n" + r"($x \leq 0$)",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color=GREY,
+        weight="bold",
+        zorder=6,
+    )
+
+    # Plot exact analytical Meixner singularity curve r^{-1/2} vs r > 0 above the sheet
+    r_vals = np.linspace(0.06, 1.95, 300)
+    y_meix = z_sh + 0.25 * (r_vals ** (-0.5))
+    ax3.plot(r_vals, y_meix, color=ORANGE, lw=3.0, zorder=7)
+    ax3.fill_between(
+        r_vals[r_vals <= 1.0],
+        z_sh,
+        y_meix[r_vals <= 1.0],
+        color=LORANGE,
+        alpha=0.55,
+        zorder=3,
+    )
+    ax3.text(
+        0.58,
+        z_sh + 0.88,
+        r"Meixner field $\propto r^{-1/2}$",
+        ha="left",
+        va="center",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+        zorder=8,
+    )
+    arrow(
+        ax3,
+        (0.54, z_sh + 0.86),
+        (0.18, z_sh + 0.25 * (0.18 ** (-0.5))),
+        ORANGE,
+        lw=1.8,
+        ms=14,
+        z=8,
+    )
+
+    # Bottom callout box (user_manual.md lines 1235, 1243, 1249)
+    box(ax3, (0.38, -0.46), 3.35, 0.96, "", LGREEN, GREEN, lw=1.8, r=0.07, z=2)
+    ax3.text(
+        0.38,
+        -0.18,
+        "Sheet(size=(30e-3, 40e-3, 0.0))",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        zorder=5,
+    )
+    badge(
+        ax3,
+        (0.38, -0.62),
+        "sheet_edge_correction=True:\n" + r"quasi-static Meixner $r^{-1/2}$ correction",
+        fc=GREEN,
+        fs=10.5,
+        pad=0.24,
+    )
+
+    ax3.set_xlim(-1.60, 2.20)
+    ax3.set_ylim(-1.10, 2.55)
+
+    fig.savefig(out_dir / "fig6_4_conformal_pec_and_sheets.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
     fig5_3(outroot)
     fig6_1(outroot)
     fig6_3(outroot)
+    fig6_4(outroot)
