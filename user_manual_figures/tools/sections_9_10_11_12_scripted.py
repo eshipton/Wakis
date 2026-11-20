@@ -33,6 +33,12 @@ from scipy.spatial import Delaunay  # noqa: E402
 import scipy.sparse as sp  # noqa: E402
 
 from wakis.bloch import incidence_angle, k_parallel  # noqa: E402
+from wakis.curvilinear import (
+    hodge_components,
+    ogrid_cartesian_mesh,
+    ogrid_mesh,
+    radial_nodes,
+)  # noqa: E402
 from wakis.resonances import harminv  # noqa: E402
 from wakis.subgrid import (
     Circle as SubgridCircle,
@@ -1475,6 +1481,358 @@ def fig11_2_subgrid_and_subtri(outroot):
     plt.close(fig)
 
 
+# -------------------------------------------------------------------------- 11.3
+def fig11_3_curvilinear_ogrid_nfit(outroot):
+    """Draw Figure 11.3: 2D Curvilinear O-Grid Non-Orthogonal FIT (CurvilinearFIT2D)."""
+    out = outroot / "section11"
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Exact manual parameters and calls (user_manual.md lines 2107-2109)
+    a, r0, r1 = 1.0e-6, 2.0e-6, 2.6e-6
+    radii = radial_nodes([0.9 * a, a, r0, r1], lambda r: 0.04e-6 if r <= a else 0.08e-6)
+    mesh = ogrid_mesh(radii, 128, interfaces=[a])
+
+    # Assertions on radial_nodes and ogrid_mesh
+    for brk in (0.9 * a, a, r0, r1):
+        assert np.any(np.isclose(radii, brk, rtol=1e-12))
+    dr_in = np.diff(radii[(radii >= 0.9 * a - 1e-15) & (radii <= a + 1e-15)])
+    dr_out = np.diff(radii[(radii >= a - 1e-15) & (radii <= r0 + 1e-15)])
+    assert np.allclose(dr_in, 0.04e-6, rtol=0.15)
+    assert np.allclose(dr_out[1:], 0.08e-6, rtol=1e-12)
+    assert mesh.n_cells > 0 and int(np.sum(mesh.cell_tags == 1)) > 0
+
+    # Multi-block O-grid/Cartesian mesh for inset and non-orthogonal Hodge assertion
+    cmesh = ogrid_cartesian_mesh(
+        np.linspace(0.55e-6, 1.0e-6, 4),
+        24,
+        1.35e-6,
+        np.array([1.65e-6, 1.95e-6]),
+        2,
+        interfaces=[1.0e-6],
+        smooth=4,
+    )
+    hc = hodge_components(cmesh)
+    W_nfit = (hc["R"].T @ sp.diags(hc["w"]) @ hc["R"]).tocsr()
+    M_diag = np.asarray(hc["node_share"].sum(axis=1)).ravel()
+    assert np.allclose((W_nfit - W_nfit.T).data, 0.0, atol=1e-15)
+    assert (W_nfit - sp.diags(W_nfit.diagonal())).nnz > 0
+    assert np.all(M_diag > 0) and np.isclose(
+        M_diag.sum(), cmesh.cell_area.sum(), rtol=1e-12
+    )
+
+    fig = plt.figure(figsize=(W, H))
+
+    # ---- LEFT PANEL (56% width): 2D polar O-grid sector + multi-block inset
+    ax1 = fig.add_axes([0.02, 0.05, 0.53, 0.90])
+    bare(ax1)
+
+    th_sec = np.linspace(0.0, 0.5 * np.pi, 240)
+    a_um, r0_um, r1_um = a * 1e6, r0 * 1e6, r1 * 1e6
+
+    # Shade material interior r <= a in light blue
+    poly_in = np.vstack(
+        [[0.0, 0.0], np.column_stack([a_um * np.cos(th_sec), a_um * np.sin(th_sec)])]
+    )
+    ax1.add_patch(Polygon(poly_in, closed=True, fc=LBLUE, ec="none", zorder=1))
+
+    # Shade radial PML annulus r in [r0, r1] in light green
+    poly_pml = np.vstack(
+        [
+            np.column_stack([r0_um * np.cos(th_sec), r0_um * np.sin(th_sec)]),
+            np.column_stack(
+                [r1_um * np.cos(th_sec[::-1]), r1_um * np.sin(th_sec[::-1])]
+            ),
+        ]
+    )
+    ax1.add_patch(Polygon(poly_pml, closed=True, fc=LGREEN, ec=GREEN, lw=1.6, zorder=1))
+
+    # Draw exact radial rings from `radii` (plus extended inner rings down to r = 0.36 um for sector view)
+    radii_inner_full = radial_nodes([0.36 * a, 0.9 * a], lambda r: 0.04e-6)
+    all_rings_um = np.unique(np.concatenate([radii_inner_full, radii])) * 1e6
+    for rr in all_rings_um:
+        col_r = GREEN if rr > r0_um + 1e-6 else BLUE
+        lw_r = 1.0 if rr <= a_um + 1e-6 else 1.15
+        ax1.plot(
+            rr * np.cos(th_sec),
+            rr * np.sin(th_sec),
+            color=col_r,
+            lw=lw_r,
+            alpha=0.80,
+            zorder=2,
+        )
+
+    # Draw azimuthal spokes (every 2nd of the 32 spokes in the 90 deg quadrant for crispness, plus all 128 on outer rim)
+    n_quad = 128 // 4
+    for j_th in range(0, n_quad + 1, 2):
+        th_j = j_th * (0.5 * np.pi) / n_quad
+        ax1.plot(
+            [0.36 * np.cos(th_j), r1_um * np.cos(th_j)],
+            [0.36 * np.sin(th_j), r1_um * np.sin(th_j)],
+            color=BLUE,
+            lw=0.9,
+            alpha=0.65,
+            zorder=2,
+        )
+    for j_th in range(1, n_quad, 2):
+        th_j = j_th * (0.5 * np.pi) / n_quad
+        ax1.plot(
+            [0.82 * np.cos(th_j), 1.16 * np.cos(th_j)],
+            [0.82 * np.sin(th_j), 1.16 * np.sin(th_j)],
+            color=BLUE,
+            lw=0.75,
+            alpha=0.55,
+            zorder=2,
+        )
+
+    # Highlight break circles a = 1.0 um, r0 = 2.0 um, r1 = 2.6 um
+    ax1.plot(a_um * np.cos(th_sec), a_um * np.sin(th_sec), color=BLUE, lw=3.2, zorder=4)
+    ax1.plot(
+        r0_um * np.cos(th_sec),
+        r0_um * np.sin(th_sec),
+        color=GREEN,
+        ls="--",
+        lw=2.2,
+        zorder=4,
+    )
+    ax1.plot(
+        r1_um * np.cos(th_sec), r1_um * np.sin(th_sec), color=GREEN, lw=2.4, zorder=4
+    )
+
+    # Labels on the O-grid sector
+    ax1.text(
+        0.48,
+        0.52,
+        "0.04e-6 (40 nm) inside\nmaterials={1: [4.0, 1.0]}",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc="white", ec=BLUE, lw=1.1, alpha=0.94),
+        zorder=6,
+    )
+    ax1.text(
+        0.86,
+        0.86,
+        r"$a = 1.0\ \mu\mathrm{m}$ (128 azimuthal cells)",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color="white",
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=BLUE, ec="none"),
+        zorder=7,
+    )
+    ax1.text(
+        1.12,
+        1.14,
+        "0.08e-6 (80 nm) outside",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.20", fc="white", ec=BLUE, lw=1.1, alpha=0.94),
+        zorder=6,
+    )
+    ax1.text(
+        0.78,
+        2.18,
+        'pml = dict(kind="radial",\n'
+        + r"$r_0 = 2.0\ \mu\mathrm{m},\ r_1 = 2.6\ \mu\mathrm{m}$)",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LGREEN, ec=GREEN, lw=1.3),
+        zorder=7,
+    )
+
+    # Inset in upper-right corner showing multi-block ogrid_cartesian_mesh / boxed_cylinders_mesh topology
+    ax_in = fig.add_axes([0.385, 0.58, 0.165, 0.30])
+    bare(ax_in)
+    cnodes_um = cmesh.nodes * 1e6
+    for ci_c, c_nodes in enumerate(cmesh.cells):
+        poly_c = cnodes_um[c_nodes]
+        fc_in = LBLUE if cmesh.cell_tags[ci_c] == 1 else "white"
+        ax_in.add_patch(
+            Polygon(poly_c, closed=True, fc=fc_in, ec=BLUE, lw=0.85, zorder=2)
+        )
+    th_full = np.linspace(0, 2 * np.pi, 200)
+    ax_in.plot(np.cos(th_full), np.sin(th_full), color=BLUE, lw=1.8, zorder=4)
+    ax_in.set_xlim(-2.05, 2.05)
+    ax_in.set_ylim(-2.05, 2.05)
+    ax_in.text(
+        0.5,
+        -0.06,
+        "ogrid_cartesian_mesh /\nboxed_cylinders_mesh",
+        transform=ax_in.transAxes,
+        ha="center",
+        va="top",
+        fontsize=10.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.20", fc=LGREY, ec=GREY, lw=1.0),
+    )
+
+    ax1.set_xlim(-0.08, 2.72)
+    ax1.set_ylim(-0.08, 2.75)
+    ax1.set_title(
+        "Body-fitted polar O-grid (ogrid_mesh, radial_nodes)",
+        fontsize=14.0,
+        weight="bold",
+        pad=8,
+    )
+
+    # ---- RIGHT PANEL (44% width): Skewed non-orthogonal cell + Hodge coupling + badges
+    ax2 = fig.add_axes([0.57, 0.30, 0.41, 0.62])
+    bare(ax2)
+
+    # Skewed quadrilateral primary cell vertices (counter-clockwise)
+    q_prim = np.array([[-1.15, -0.75], [0.85, -0.65], [1.35, 0.80], [-0.55, 0.72]])
+    ax2.add_patch(Polygon(q_prim, closed=True, fc=LBLUE, ec=BLUE, lw=2.6, zorder=2))
+    for vx, vy in q_prim:
+        ax2.plot(vx, vy, "o", color=BLUE, ms=8.5, mec="white", mew=1.2, zorder=5)
+
+    # Staggered dual cell (orange dashed polygon around cell and across its 4 edges)
+    c_center = q_prim.mean(axis=0)
+    edge_mids = np.array([0.5 * (q_prim[k] + q_prim[(k + 1) % 4]) for k in range(4)])
+    # Dual points of the 4 neighbouring skewed cells
+    nb_dual = np.array([[0.05, -1.45], [2.05, 0.15], [0.25, 1.50], [-1.75, -0.10]])
+    for k in range(4):
+        ax2.plot(
+            [c_center[0], edge_mids[k, 0], nb_dual[k, 0]],
+            [c_center[1], edge_mids[k, 1], nb_dual[k, 1]],
+            color=ORANGE,
+            ls="--",
+            lw=2.2,
+            zorder=3,
+        )
+        ax2.plot(nb_dual[k, 0], nb_dual[k, 1], "o", color=ORANGE, ms=6.5, zorder=5)
+    ax2.plot(c_center[0], c_center[1], "o", color=ORANGE, ms=8.0, zorder=6)
+
+    # Highlight primary edge vector (right edge: vertex 1 -> vertex 2) and dual edge vector meeting at non-orthogonal angle
+    p_cross = edge_mids[1]
+    prim_dir = (q_prim[2] - q_prim[1]) / np.linalg.norm(q_prim[2] - q_prim[1])
+    dual_dir = (nb_dual[1] - c_center) / np.linalg.norm(nb_dual[1] - c_center)
+    cos_ang = float(np.dot(prim_dir, dual_dir))
+    # Assert visibly non-orthogonal angle (not 90 deg)
+    assert abs(cos_ang) > 0.20
+
+    arrow(ax2, q_prim[1], q_prim[2], color=BLUE, lw=3.6, ms=22, z=6)
+    arrow(ax2, c_center, nb_dual[1], color=ORANGE, lw=3.0, ms=20, z=6)
+    ax2.text(
+        q_prim[2, 0] + 0.08,
+        q_prim[2, 1] + 0.05,
+        "primary edge",
+        ha="left",
+        va="bottom",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+    )
+    ax2.text(
+        nb_dual[1, 0] + 0.05,
+        nb_dual[1, 1] - 0.12,
+        "dual edge",
+        ha="left",
+        va="top",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+    )
+
+    # Orange non-orthogonal angle arc at p_cross
+    th_p = np.arctan2(prim_dir[1], prim_dir[0])
+    th_d = np.arctan2(dual_dir[1], dual_dir[0])
+    arc_th = np.linspace(th_d, th_p, 40)
+    r_a = 0.34
+    ax2.plot(
+        p_cross[0] + r_a * np.cos(arc_th),
+        p_cross[1] + r_a * np.sin(arc_th),
+        color=ORANGE,
+        lw=2.2,
+        zorder=7,
+    )
+    ax2.text(
+        p_cross[0] + 0.36,
+        p_cross[1] + 0.28,
+        r"$\theta \neq 90^\circ$",
+        ha="left",
+        va="center",
+        fontsize=12.5,
+        color=ORANGE,
+        weight="bold",
+    )
+
+    # Green corner coupling arrows between adjacent edge fluxes
+    for k in range(4):
+        m_a = 0.65 * q_prim[k] + 0.35 * edge_mids[(k - 1) % 4]
+        m_b = 0.65 * q_prim[k] + 0.35 * edge_mids[k]
+        arrow(ax2, m_a, m_b, color=GREEN, lw=2.2, style="<|-|>", rad=0.35, ms=14, z=7)
+
+    ax2.text(
+        0.10,
+        1.82,
+        "symmetric flux-to-voltage Hodge\n(Schuhmann & Weiland 2000)",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.26", fc=LGREEN, ec=GREEN, lw=1.4),
+        zorder=8,
+    )
+
+    ax2.set_xlim(-1.95, 2.75)
+    ax2.set_ylim(-1.65, 2.15)
+    ax2.set_title(
+        "Non-orthogonal curvilinear cell (CurvilinearFIT2D)",
+        fontsize=14.0,
+        weight="bold",
+        pad=8,
+    )
+
+    # Three badges below the right panel (user_manual.md lines 2097 and 2122)
+    fig.text(
+        0.775,
+        0.24,
+        r"diagonal node mass $M$ $\Rightarrow$ explicit leapfrog, zero matrix inversions",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.26", fc=LGREEN, ec=GREEN, lw=1.3),
+    )
+    fig.text(
+        0.775,
+        0.155,
+        r"energy drift $7\times 10^{-16}$, radial PML reflection $5\times 10^{-5}$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color="white",
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.26", fc=GREY, ec="none"),
+    )
+    fig.text(
+        0.775,
+        0.06,
+        "B1 at 1% RMS: 158k (TM) / 176k (TE) unknowns\n(~4× faster than graded conformal Cart.)",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.26", fc=LBLUE, ec=BLUE, lw=1.3),
+    )
+
+    fig.savefig(out / "fig11_3_curvilinear_ogrid_nfit.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
@@ -1482,3 +1840,4 @@ if __name__ == "__main__":
     fig10_5_harminv_resonance(outroot)
     fig11_1_triangle_and_polygon_fit(outroot)
     fig11_2_subgrid_and_subtri(outroot)
+    fig11_3_curvilinear_ogrid_nfit(outroot)
