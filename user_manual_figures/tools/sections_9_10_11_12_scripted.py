@@ -14,6 +14,7 @@ Usage: python sections_9_10_11_12_scripted.py OUTROOT
 """
 
 import sys
+import warnings
 from pathlib import Path
 
 import matplotlib
@@ -39,6 +40,7 @@ from wakis.curvilinear import (
     ogrid_mesh,
     radial_nodes,
 )  # noqa: E402
+from wakis.estimate import _THROUGHPUT, _THROUGHPUT_FUSED  # noqa: E402
 from wakis.highorder import DGTD2D  # noqa: E402
 from wakis.highorder.fdtd24 import FDTD24  # noqa: E402
 from wakis.highorder.mesh2d import TriMesh  # noqa: E402
@@ -1371,9 +1373,11 @@ def fig11_2_subgrid_and_subtri(outroot):
     bare(ax3)
 
     # Build real subtri_circles_mesh around r = 1.0e-6 (user_manual.md lines 2061, 2075-2085)
-    st_mesh, st_P, st_info = subtri_circles_mesh(
-        [(0.0, 0.0, 1.0e-6)], h=0.09e-6, levels=2, half_width=1.8e-6, pml_cells=0
-    )
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)
+        st_mesh, st_P, st_info = subtri_circles_mesh(
+            [(0.0, 0.0, 1.0e-6)], h=0.09e-6, levels=2, half_width=1.8e-6, pml_cells=0
+        )
     st_solver = SubTriFIT2D(st_mesh, st_P, materials={0: [4.0, 1.0]}, polarization="TE")
 
     assert (
@@ -2216,7 +2220,259 @@ def fig11_6_high_order_dgtd_fdtd24(outroot):
     plt.close(fig)
 
 
+# -------------------------------------------------------------------------- 12.2
+def fig12_2_gpu_throughput_and_timings(outroot):
+    """Draw Figure 12.2: Measured per-step kernel timings and sustained throughput."""
+    out = outroot / "section12"
+    out.mkdir(parents=True, exist_ok=True)
+
+    # Exact measured kernel timings [ms] from user_manual.md lines 2284-2286
+    workloads = [
+        "3D CPML step",  # line 2284
+        "TF/SF + 81-freq\nflux monitor step",  # line 2285
+        "Adjoint\nbackward step",  # line 2286
+    ]
+    t_cupy = np.array([7.3, 11.7, 6.0])  # ms, lines 2284-2286
+    t_fused = np.array([0.68, 0.63, 0.10])  # ms, lines 2284-2286
+    speedup_labels = ["10.7× faster", "18.6× faster", "60× faster"]  # lines 2284-2286
+
+    # Assert timing speedups match manual lines 2284-2286
+    assert np.isclose(t_cupy[0] / t_fused[0], 10.7, atol=0.05)
+    assert np.isclose(t_cupy[1] / t_fused[1], 18.6, atol=0.05)
+    assert np.isclose(t_cupy[2] / t_fused[2], 60.0, atol=0.05)
+
+    # Exact measured sustained throughput [Mcells/s] from user_manual.md lines 2308-2310
+    # Columns: [CPU (scipy, 1 core), CPU (sparse_dot_mkl, 8 cores), GPU CuPy (use_gpu=True), GPU Fused (use_gpu=True, fused=True)]
+    g1_65_pec = np.array(
+        [19.4, 29.6, 738.0, 610.0]
+    )  # 65^3 (PEC walls, 0.275 M), line 2308
+    g2_65_cpml = np.array(
+        [7.1, 7.1, 38.7, 404.0]
+    )  # 65^3 (CPML walls, 0.275 M), line 2309
+    g3_129_pec = np.array(
+        [14.7, 17.1, 333.0, 468.0]
+    )  # 129^3 (PEC walls, 2.15 M), line 2310
+
+    # Assert throughput ratios and calibration table consistency with wakis/estimate.py
+    assert round(g1_65_pec[3] / g1_65_pec[0]) == 31  # line 2308: 31x vs 1-core CPU
+    assert round(g2_65_cpml[3] / g2_65_cpml[0]) == 57  # line 2309: 57x vs CPU
+    assert round(g3_129_pec[3] / g3_129_pec[0]) == 32  # line 2310: 32x vs CPU
+    assert np.isclose(
+        g3_129_pec[3] / g3_129_pec[2], 1.4, atol=0.05
+    )  # line 2310: 1.4x vs CuPy
+    assert dict(_THROUGHPUT[("cpu", False)])[2.75e5] == g1_65_pec[0]
+    assert dict(_THROUGHPUT[("cpu", True)])[2.75e5] == g2_65_cpml[0]
+    assert dict(_THROUGHPUT[("gpu", False)])[2.75e5] == g1_65_pec[2]
+    assert dict(_THROUGHPUT[("gpu", False)])[2.15e6] == g3_129_pec[2]
+    assert dict(_THROUGHPUT_FUSED[False])[2.75e5] == g1_65_pec[3]
+    assert dict(_THROUGHPUT_FUSED[True])[2.75e5] == g2_65_cpml[3]
+    assert dict(_THROUGHPUT_FUSED[False])[2.15e6] == g3_129_pec[3]
+
+    fig = plt.figure(figsize=(W, H))
+
+    # ---- LEFT PANEL (46% width): Per-step kernel timings on NVIDIA L4 [ms]
+    ax1 = fig.add_axes([0.15, 0.16, 0.30, 0.72])
+    y_idx = np.arange(len(workloads))[::-1]
+    bh = 0.34
+
+    bars_cupy = ax1.barh(
+        y_idx + bh / 2,
+        t_cupy,
+        height=bh,
+        color=LORANGE,
+        edgecolor=ORANGE,
+        lw=1.8,
+        label="GPU CuPy (fused=False)",
+        zorder=3,
+    )
+    bars_fused = ax1.barh(
+        y_idx - bh / 2,
+        t_fused,
+        height=bh,
+        color=LBLUE,
+        edgecolor=BLUE,
+        lw=1.8,
+        label="GPU Fused (fused=True)",
+        zorder=3,
+    )
+
+    for b in bars_cupy:
+        w_val = b.get_width()
+        ax1.text(
+            w_val + 0.25,
+            b.get_y() + b.get_height() / 2,
+            f"{w_val:.1f} ms",
+            ha="left",
+            va="center",
+            fontsize=11.0,
+            color=ORANGE,
+            weight="bold",
+        )
+    for b, sp_lab in zip(bars_fused, speedup_labels):
+        w_val = b.get_width()
+        ax1.text(
+            w_val + 0.25,
+            b.get_y() + b.get_height() / 2,
+            f"{w_val:.2f} ms  ({sp_lab})",
+            ha="left",
+            va="center",
+            fontsize=11.0,
+            color=BLUE,
+            weight="bold",
+        )
+
+    ax1.set_yticks(y_idx)
+    ax1.set_yticklabels(workloads, fontsize=11.5, weight="bold")
+    ax1.set_xlim(0.0, 15.2)
+    ax1.set_ylim(-0.6, 2.65)
+    ax1.set_xlabel("time per step [ms]", fontsize=13.0)
+    ax1.set_title(
+        "Per-step kernel timings on NVIDIA L4 [ms]\n(lower is better)",
+        fontsize=13.0,
+        weight="bold",
+        pad=10,
+    )
+    ax1.legend(
+        loc="upper right",
+        frameon=True,
+        facecolor="white",
+        edgecolor=LGREY,
+        fontsize=10.5,
+    )
+    for sp_name in ("top", "right"):
+        ax1.spines[sp_name].set_visible(False)
+
+    # ---- RIGHT PANEL (54% width): Measured Sustained Throughput [Mcells/s]
+    ax2 = fig.add_axes([0.52, 0.16, 0.45, 0.72])
+    groups = np.vstack([g1_65_pec, g2_65_cpml, g3_129_pec])
+    x_grp = np.arange(3) * 1.35
+    bw = 0.24
+    offsets = np.array([-1.5, -0.5, 0.5, 1.5]) * bw
+    backend_labels = [
+        "CPU (scipy, 1 core)",
+        "CPU (sparse_dot_mkl, 8 cores)",
+        "GPU CuPy (use_gpu=True)",
+        "GPU Fused (use_gpu=True, fused=True)",
+    ]
+    fcs_r = [LGREY, "#b5bac1", LORANGE, LBLUE]
+    ecs_r = [GREY, "#2d3136", ORANGE, BLUE]
+
+    for j_b in range(4):
+        vals_b = groups[:, j_b]
+        rects = ax2.bar(
+            x_grp + offsets[j_b],
+            vals_b,
+            width=bw * 0.92,
+            color=fcs_r[j_b],
+            edgecolor=ecs_r[j_b],
+            lw=1.6,
+            label=backend_labels[j_b],
+            zorder=3,
+        )
+        for rect, v_val in zip(rects, vals_b):
+            txt_v = f"{v_val:.0f}" if v_val >= 100.0 else f"{v_val:.1f}"
+            ax2.text(
+                rect.get_x() + rect.get_width() / 2,
+                v_val + 12.0,
+                txt_v,
+                ha="center",
+                va="bottom",
+                fontsize=9.8,
+                color=ecs_r[j_b],
+                weight="bold",
+                zorder=5,
+            )
+
+    # Callout badges above each workload group
+    ax2.text(
+        x_grp[0],
+        795.0,
+        "31× vs 1-core CPU\n(bandwidth-bound PEC)",
+        ha="center",
+        va="bottom",
+        fontsize=10.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LGREY, ec=GREY, lw=1.1),
+        zorder=6,
+    )
+    ax2.text(
+        x_grp[1],
+        455.0,
+        "57× vs CPU,\n10.7× vs CuPy",
+        ha="center",
+        va="bottom",
+        fontsize=10.8,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.4),
+        zorder=6,
+    )
+    ax2.text(
+        x_grp[2],
+        518.0,
+        "32× vs CPU,\n1.4× vs CuPy",
+        ha="center",
+        va="bottom",
+        fontsize=10.5,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LBLUE, ec=BLUE, lw=1.2),
+        zorder=6,
+    )
+
+    ax2.set_xticks(x_grp)
+    ax2.set_xticklabels(
+        [
+            r"$65^3$ (PEC walls," + "\n0.275 M)",
+            r"$65^3$ (CPML walls," + "\n0.275 M)",
+            r"$129^3$ (PEC walls," + "\n2.15 M)",
+        ],
+        fontsize=11.0,
+        weight="bold",
+    )
+    ax2.set_ylim(0.0, 910.0)
+    ax2.set_ylabel("sustained throughput [Mcells/s]", fontsize=13.0)
+    ax2.set_title(
+        "Measured Sustained Throughput [Mcells/s]\n(float64, higher is better)",
+        fontsize=13.0,
+        weight="bold",
+        pad=10,
+    )
+    ax2.legend(
+        loc="upper right",
+        frameon=True,
+        facecolor="white",
+        edgecolor=LGREY,
+        fontsize=10.0,
+    )
+    for sp_name in ("top", "right"):
+        ax2.spines[sp_name].set_visible(False)
+
+    fig.savefig(out / "fig12_2_gpu_throughput_and_timings.png", facecolor="white")
+    plt.close(fig)
+
+
+def _mutation_check():
+    """Verify that assertions fail when mathematical quantities are mutated."""
+    k_b = k_parallel(300e12, np.deg2rad(30.0), phi=0.0, n=1.0)
+    assert not np.isclose(
+        incidence_angle(k_b, 300e12, n=1.0), np.deg2rad(35.0), rtol=1e-6
+    )
+    tri_eq = np.array([[0.0, 0.0], [1.0, 0.0], [0.5, np.sqrt(3.0) / 2.0]])
+    cc_eq = _circumcentre(*tri_eq)
+    assert not np.isclose(
+        _shoelace_area(tri_eq), 1.5 * _shoelace_area(tri_eq), rtol=1e-6
+    )
+    assert np.allclose(cc_eq, [0.5, np.sqrt(3.0) / 6.0], rtol=1e-12)
+    c1_bad, c2_bad = 1.0, 0.0  # 2nd-order weights fail 4th-order cubic cancellation
+    assert not np.isclose(
+        c1_bad * (0.5**3 * 2.0) + c2_bad * (1.5**3 * 2.0), 0.0, atol=1e-6
+    )
+
+
 if __name__ == "__main__":
+    _mutation_check()
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
     fig9_1_bloch_periodic(outroot)
@@ -2225,3 +2481,4 @@ if __name__ == "__main__":
     fig11_2_subgrid_and_subtri(outroot)
     fig11_3_curvilinear_ogrid_nfit(outroot)
     fig11_6_high_order_dgtd_fdtd24(outroot)
+    fig12_2_gpu_throughput_and_timings(outroot)
