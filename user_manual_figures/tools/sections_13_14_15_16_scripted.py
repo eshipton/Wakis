@@ -28,9 +28,11 @@ if str(ROOT) not in sys.path:
 
 from scipy.constants import c as c_light  # noqa: E402
 from scipy.constants import epsilon_0 as eps_0  # noqa: E402
+from scipy.spatial import Delaunay  # noqa: E402
 from scipy.special import i0, i1, k0, k1  # noqa: E402
 
 from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
+from wakis.benchmarks import cost_to_target  # noqa: E402
 from wakis.inverse import projection as ssp  # noqa: E402
 from wakis.plasma import linear_wake, pipe_green_function, plasma_frequency, plasma_wavelength  # noqa: E402
 
@@ -846,9 +848,306 @@ def fig14_3_cold_plasma_wake(out_root):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 15.2
+def fig15_2_cost_to_target(out_root):
+    """Figure 15.2: Why wakis.benchmarks evaluates solvers by cost_to_target rather than fixed h.
+
+    Source lines in user_manual.md: 2600, 2607, 2608.
+    """
+    out_dir = out_root / "section15"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    fig = plt.figure(figsize=(W, H))
+    fig.add_artist(plt.Line2D([0.365, 0.365], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.5))
+
+    # ---- LEFT PANEL (36% width): Why fixed h is meaningless -----------------
+    fig.text(0.185, 0.93, "Why fixed h is meaningless", ha="center", fontsize=17, weight="bold")
+
+    r_arc = 0.68
+    th_arc = np.linspace(0.0, 0.5 * np.pi, 100)
+    arc_xy = np.column_stack([r_arc * np.cos(th_arc), r_arc * np.sin(th_arc)])
+
+    # Patch 1: Delaunay triangles around curved arc
+    ax_p1 = fig.add_axes([0.03, 0.65, 0.14, 0.23])
+    bare(ax_p1)
+    rng = np.random.default_rng(7)
+    grid_pts = np.array([(x, y) for x in np.linspace(0, 1, 6) for y in np.linspace(0, 1, 6)])
+    arc_nodes = np.column_stack([r_arc * np.cos(np.linspace(0, np.pi / 2, 7)), r_arc * np.sin(np.linspace(0, np.pi / 2, 7))])
+    keep = np.abs(np.hypot(grid_pts[:, 0], grid_pts[:, 1]) - r_arc) > 0.09
+    pts_tri = np.vstack([grid_pts[keep], arc_nodes])
+    tri_mesh = Delaunay(pts_tri).simplices
+    for s in tri_mesh:
+        pts_s = pts_tri[s]
+        c_s = pts_s.mean(axis=0)
+        fc_s = LGREEN if np.hypot(c_s[0], c_s[1]) < r_arc else "white"
+        ax_p1.add_patch(Polygon(pts_s, closed=True, fc=fc_s, ec=BLUE, lw=1.1, zorder=2))
+    ax_p1.plot(arc_xy[:, 0], arc_xy[:, 1], color=GREY, lw=2.6, zorder=4)
+    ax_p1.set_xlim(-0.05, 1.05)
+    ax_p1.set_ylim(-0.05, 1.05)
+    fig.text(0.18, 0.765, "triangles\n(body-fitted\nDelaunay)", ha="left", va="center", fontsize=13.5, color=BLUE, weight="bold")
+
+    # Patch 2: p = 3 curved DG elements (coarse curved triangles with (p+1)(p+2)/2 = 10 nodes per triangle)
+    p_dg = 3
+    n_dg_nodes = (p_dg + 1) * (p_dg + 2) // 2
+    assert n_dg_nodes == 10  # exact 2D polynomial basis dimension for p = 3 (user_manual.md line 2608)
+
+    ax_p2 = fig.add_axes([0.03, 0.39, 0.14, 0.23])
+    bare(ax_p2)
+    # Coarse curved triangles on [0, 1]^2 split by the arc at (r_arc, 0) and (0, r_arc)
+    dg_tris = [
+        (np.array([0.0, 0.0]), np.array([r_arc, 0.0]), np.array([0.0, r_arc]), True),
+        (np.array([r_arc, 0.0]), np.array([1.0, 0.0]), np.array([1.0, 1.0]), False),
+        (np.array([0.0, r_arc]), np.array([1.0, 1.0]), np.array([0.0, 1.0]), False),
+        (np.array([r_arc, 0.0]), np.array([1.0, 1.0]), np.array([0.0, r_arc]), False),
+    ]
+    bary_p3 = [
+        (i / 3.0, j / 3.0, (3 - i - j) / 3.0)
+        for i in range(4)
+        for j in range(4 - i)
+    ]
+    assert len(bary_p3) == n_dg_nodes
+    # Draw shaded interior of circle
+    sec_pts = np.vstack([[0.0, 0.0], arc_xy])
+    ax_p2.add_patch(Polygon(sec_pts, closed=True, fc=LGREEN, ec="none", zorder=1))
+    ax_p2.add_patch(Rectangle((0.0, 0.0), 1.0, 1.0, fc="none", ec=BLUE, lw=1.5, zorder=2))
+    ax_p2.plot([r_arc, 1.0], [0.0, 1.0], color=BLUE, lw=1.4, zorder=2)
+    ax_p2.plot([0.0, 1.0], [r_arc, 1.0], color=BLUE, lw=1.4, zorder=2)
+    ax_p2.plot(arc_xy[:, 0], arc_xy[:, 1], color=GREY, lw=2.6, zorder=4)
+    for v0, v1, v2, is_inner in dg_tris:
+        for l0, l1, l2 in bary_p3:
+            pt = l0 * v0 + l1 * v1 + l2 * v2
+            # Isoparametric blend onto the circular arc for the curved edge between (r_arc,0) and (0,r_arc)
+            if is_inner and (l1 + l2 > 0):
+                ang = 0.5 * np.pi * l2 / (l1 + l2)
+                arc_pt = np.array([r_arc * np.cos(ang), r_arc * np.sin(ang)])
+                chord_pt = (l1 * v1 + l2 * v2) / (l1 + l2)
+                pt = pt + 4.0 * l1 * l2 * (arc_pt - chord_pt)
+            elif (not is_inner) and np.allclose(v0, [r_arc, 0.0]) and np.allclose(v2, [0.0, r_arc]) and (l0 + l2 > 0):
+                ang = 0.5 * np.pi * l2 / (l0 + l2)
+                arc_pt = np.array([r_arc * np.cos(ang), r_arc * np.sin(ang)])
+                chord_pt = (l0 * v0 + l2 * v2) / (l0 + l2)
+                pt = pt + 4.0 * l0 * l2 * (arc_pt - chord_pt)
+            ax_p2.plot(pt[0], pt[1], "o", color=ORANGE, ms=3.2, zorder=5)
+    ax_p2.set_xlim(-0.05, 1.05)
+    ax_p2.set_ylim(-0.05, 1.05)
+    fig.text(
+        0.18,
+        0.505,
+        "p = 3 curved\nDG elements\n(high-order nodes)",
+        ha="left",
+        va="center",
+        fontsize=13.5,
+        color=ORANGE,
+        weight="bold",
+    )
+
+    # Patch 3: 4-level quadtree around the curved arc
+    ax_p3 = fig.add_axes([0.03, 0.13, 0.14, 0.23])
+    bare(ax_p3)
+    ax_p3.add_patch(Polygon(sec_pts, closed=True, fc=LGREEN, ec="none", zorder=1))
+
+    quad_levels = set()
+
+    def subdivide_quad(x0, y0, size, level):
+        corners = np.array([[x0, y0], [x0 + size, y0], [x0 + size, y0 + size], [x0, y0 + size]])
+        dists = np.hypot(corners[:, 0], corners[:, 1]) - r_arc
+        straddles = (dists.min() <= 0.0) and (dists.max() >= 0.0)
+        if level < 3 and straddles:
+            half = 0.5 * size
+            for dx_q in (0.0, half):
+                for dy_q in (0.0, half):
+                    subdivide_quad(x0 + dx_q, y0 + dy_q, half, level + 1)
+        else:
+            quad_levels.add(level)
+            ax_p3.add_patch(Rectangle((x0, y0), size, size, fc="none", ec=BLUE, lw=1.0, zorder=2))
+
+    for ix in (0.0, 0.5):
+        for iy in (0.0, 0.5):
+            subdivide_quad(ix, iy, 0.5, 0)
+    assert quad_levels == {0, 1, 2, 3}  # exact 4-level quadtree hierarchy (user_manual.md line 2608)
+
+    ax_p3.plot(arc_xy[:, 0], arc_xy[:, 1], color=GREY, lw=2.6, zorder=4)
+    ax_p3.set_xlim(-0.05, 1.05)
+    ax_p3.set_ylim(-0.05, 1.05)
+    fig.text(
+        0.18,
+        0.245,
+        "4-level quadtree\n(nested Cartesian\nsubgrid)",
+        ha="left",
+        va="center",
+        fontsize=13.5,
+        color=BLUE,
+        weight="bold",
+    )
+
+    # Red cross badge at bottom of Left Panel
+    fig.text(
+        0.185,
+        0.065,
+        "✗  different DOFs per h\n→ compare by cost at target error",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color="white",
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.30", fc=RED, ec="none"),
+    )
+
+    # ---- RIGHT PANEL (64% width): Log-linear interpolation in cost_to_target
+    fig.text(0.685, 0.93, "Log-linear interpolation in cost_to_target", ha="center", fontsize=17, weight="bold")
+    ax_r = fig.add_axes([0.445, 0.14, 0.515, 0.72])
+    clean_axes(ax_r)
+
+    # Two exact power-law convergence ladders y = C * x^{-alpha} (4 discrete markers each)
+    # Blue: alpha_1 = 1 (schematic 2nd-order slope vs 2D unknowns N ~ h^-2)
+    # Orange: alpha_2 = 2 (schematic high-order slope)
+    x_blue = np.array([1.0, 2.2, 5.2, 10.5])
+    c_blue, alpha_blue = 0.085, 1.0
+    err_blue = c_blue * x_blue ** (-alpha_blue)
+
+    x_orange = np.array([0.85, 1.45, 2.45, 4.1])
+    c_orange, alpha_orange = 0.065, 2.0
+    err_orange = c_orange * x_orange ** (-alpha_orange)
+
+    # Call the real wakis.benchmarks.cost_to_target API (user_manual.md line 2608)
+    records_blue = [
+        {
+            "metrics": {"q_sca_rms_rel": float(e)},
+            "cost": {"unknowns": float(u), "steps": 100, "run_s": float(0.1 * u)},
+        }
+        for u, e in zip(x_blue, err_blue)
+    ]
+    records_orange = [
+        {
+            "metrics": {"q_sca_rms_rel": float(e)},
+            "cost": {"unknowns": float(u), "steps": 100, "run_s": float(0.1 * u)},
+        }
+        for u, e in zip(x_orange, err_orange)
+    ]
+    target_val = 0.02
+    res_blue = cost_to_target(records_blue, metric="q_sca_rms_rel", target=target_val)
+    res_orange = cost_to_target(records_orange, metric="q_sca_rms_rel", target=target_val)
+    x_star = res_blue["unknowns"]
+
+    # Bracketing markers (x_k, E_k) above 0.02 and (x_{k+1}, E_{k+1}) below 0.02 on the blue ladder
+    k_br = int(np.flatnonzero(err_blue > target_val)[-1])
+    xk, ek = float(x_blue[k_br]), float(err_blue[k_br])
+    xk1, ek1 = float(x_blue[k_br + 1]), float(err_blue[k_br + 1])
+    assert ek > target_val > ek1
+
+    # Assert log-linear interpolation identity and exact agreement with wakis.benchmarks.cost_to_target
+    t_interp = (np.log10(target_val) - np.log10(ek)) / (np.log10(ek1) - np.log10(ek))
+    x_star_loglin = 10.0 ** (np.log10(xk) + t_interp * (np.log10(xk1) - np.log10(xk)))
+    x_star_exact = (target_val / c_blue) ** (-1.0 / alpha_blue)
+    assert np.isclose(x_star, x_star_loglin, rtol=1e-14)
+    assert np.isclose(x_star, x_star_exact, rtol=1e-14)
+    assert np.isclose(res_blue["work"], 100.0 * x_star, rtol=1e-14)
+    assert res_orange["unknowns"] < res_blue["unknowns"]
+
+    # Three pre-registered manual threshold lines: 5% (0.05), 2% (0.02), 1% (0.01) (line 2600)
+    for t_val, t_lab in ((0.05, "5% (0.05)"), (0.02, "target = 0.02 (2%)"), (0.01, "1% (0.01)")):
+        lw_t = 2.0 if t_val == 0.02 else 1.4
+        ax_r.axhline(t_val, color=GREEN, lw=lw_t, ls="--", zorder=2)
+        ax_r.text(
+            12.8,
+            t_val * 1.06,
+            t_lab,
+            color=GREEN,
+            fontsize=11.8,
+            weight="bold" if t_val == 0.02 else "normal",
+            ha="right",
+            va="bottom",
+        )
+
+    # Plot the two convergence ladders
+    ax_r.loglog(
+        x_blue,
+        err_blue,
+        "o-",
+        color=BLUE,
+        lw=2.4,
+        ms=8.5,
+        label=r"second-order arm ($y = C\,x^{-1}$)",
+        zorder=4,
+    )
+    ax_r.loglog(
+        x_orange,
+        err_orange,
+        "s-",
+        color=ORANGE,
+        lw=2.4,
+        ms=8.0,
+        label=r"high-order arm ($y = C\,x^{-2}$)",
+        zorder=4,
+    )
+
+    # Highlight bracketing segment (x_k, E_k) -> (x_{k+1}, E_{k+1}) and log-linear crossing
+    ax_r.loglog([xk, xk1], [ek, ek1], color=GREEN, lw=4.0, zorder=5)
+    ax_r.loglog([xk, xk1], [ek, ek1], "o", color=BLUE, mfc="white", mew=2.4, ms=11, zorder=6)
+    ax_r.text(xk * 1.07, ek * 1.06, r"$(x_k,\ E_k)$", color=BLUE, fontsize=12.5, ha="left", va="bottom", weight="bold")
+    ax_r.text(
+        xk1 * 0.94,
+        ek1 * 0.80,
+        r"$(x_{k+1},\ E_{k+1})$",
+        color=BLUE,
+        fontsize=12.5,
+        ha="right",
+        va="top",
+        weight="bold",
+    )
+
+    # Annotate coarse -> fine resolution ladder
+    ax_r.annotate(
+        "coarse → fine resolution ladder",
+        xy=(x_blue[0] * 1.15, err_blue[0] / 1.15),
+        xytext=(1.12, 0.125),
+        color=GREY,
+        fontsize=11.8,
+        weight="bold",
+        arrowprops=dict(arrowstyle="-|>", color=GREY, lw=1.5, mutation_scale=14),
+    )
+
+    # Intersection circle at (x_star, 0.02) and vertical drop arrow to horizontal cost axis
+    ax_r.loglog([x_star], [target_val], "o", color=GREEN, mfc=LGREEN, mew=2.8, ms=14, zorder=7)
+    y_bot = 0.0020
+    ax_r.annotate(
+        "",
+        xy=(x_star, y_bot),
+        xytext=(x_star, target_val * 0.88),
+        arrowprops=dict(arrowstyle="-|>", color=GREEN, lw=2.6, mutation_scale=18),
+        zorder=6,
+    )
+    ax_r.text(
+        x_star,
+        y_bot * 1.22,
+        'cost_to_target(records, "q_sca_rms_rel", 0.02)',
+        color="white",
+        fontsize=11.5,
+        weight="bold",
+        ha="center",
+        va="bottom",
+        bbox=dict(boxstyle="round,pad=0.28", fc=GREEN, ec="none"),
+        zorder=8,
+    )
+
+    ax_r.set_xlim(0.72, 13.5)
+    ax_r.set_ylim(y_bot, 0.16)
+    ax_r.minorticks_off()
+    ax_r.set_xticks([])
+    ax_r.set_yticks([0.01, 0.02, 0.05])
+    ax_r.set_yticklabels(["0.01", "0.02", "0.05"], fontsize=12.5)
+    ax_r.set_xlabel("cost: unknowns, work = unknowns * steps, or run_s (log scale)", fontsize=13)
+    ax_r.set_ylabel("relative error q_sca_rms_rel (log scale)", fontsize=13)
+    ax_r.legend(loc="upper right", frameon=False, fontsize=11.8)
+
+    fig.savefig(out_dir / "fig15_2_cost_to_target.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     out_root = Path(sys.argv[1])
     out_root.mkdir(parents=True, exist_ok=True)
     fig13_4_subpixel_smoothed_projection(out_root)
     fig14_2_tete_dispersion(out_root)
     fig14_3_cold_plasma_wake(out_root)
+    fig15_2_cost_to_target(out_root)
