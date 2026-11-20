@@ -1,0 +1,110 @@
+{
+ "section": "section10",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G, total-field or forward-wave quantities in blue; dual grid G-tilde, scattered-field, backward-wave, or equivalent-current quantities in orange; exact/topological/reference items in dark grey; matched monitor surfaces and conserved-power items in green; truncation limits or unresolved features in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig10_1_flux_cross_sections",
+   "subsection": "10.3",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    1795,
+    1798,
+    1800,
+    1802,
+    1807,
+    1808,
+    1810,
+    1811,
+    1816,
+    1817,
+    1819,
+    1820,
+    1821,
+    1824
+   ],
+   "caption": "Figure 10.1: Measuring scattering, absorption, and extinction cross sections with FluxMonitor and TFSFSource. Left: a closed inner FluxMonitor box (abs_box) inside the total-field region integrates inward power to give σ_abs, while a closed outer FluxMonitor box (scat_box) in the scattered-field region integrates outward scattered power to give σ_sca. Right: temporal (Δt/2 phase factor) and spatial (averaging two bracketing H planes with dual-edge trapezoidal areas) synchronization of E(f) and H(f) ensures σ_abs = 0 for a lossless scatterer.",
+   "visual_intent": "Two panels (60% left, 40% right). LEFT PANEL: Nested Concentric Boxes in 2D/3D cutaway view. At the centre sits a shaded scatterer. Surrounding the scatterer is a closed green dashed 6-face box labelled 'abs_box (FluxMonitor in total field)' with outward normal arrows 'n̂' on all 6 faces and inward energy flow arrows yielding 'σ_abs = −abs_box.get_flux() / I_inc'. Outside abs_box is a blue box labelled 'TFSFSource' with incident plane-wave arrows 'E_inc(f), I_inc = |E_inc(f)|² / η₀'. Outside TFSFSource in the scattered-field region is a larger closed orange dashed 6-face box labelled 'scat_box (FluxMonitor in scattered field)' with outward normal arrows 'n̂' and outgoing scattered wave arrows yielding 'σ_sca = scat_box.get_flux() / I_inc'. At the bottom of the left panel: 'Φ(f) = Re ∬_S (E(f) × H*(f)) · dA' and 'σ_ext = σ_sca + σ_abs'. RIGHT PANEL: A staggered cell slice across one monitor plane S. A blue vertical plane holds tangential 'E(f)'; two orange parallel planes on either side hold tangential 'H(f)'. Curved orange arrows merge the two bracketing H planes onto the E plane with label 'averaging the two bracketing H planes + dual-edge trapezoidal areas' and a time-sync badge 'Δt/2 phase factor'. Bottom green check badge: 'lossless scatterer ⇒ σ_abs = 0 to discretization precision'."
+  },
+  {
+   "id": "fig10_2_near2far_ground_plane",
+   "subsection": "10.4",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    1828,
+    1830,
+    1836,
+    1840,
+    1845,
+    1846,
+    1847,
+    1850,
+    1851,
+    1852,
+    1853
+   ],
+   "caption": "Figure 10.2: Near-to-far-field transformation (Near2FarMonitor) with PEC ground-plane image theory. Left: a 5-face Huygens box above an infinite PEC ground plane (ground_plane='−z') records equivalent tangential surface currents J_s = n̂ × H and M_s = −n̂ × E; exact image theory accounts for the lower face via image currents. Right: vector radiation integrals map the surface currents to the upper half-space (θ ∈ [0, π/2], φ ∈ [0, 2π]).",
+   "visual_intent": "Two panels side by side. LEFT PANEL (55% width): Cross-section of an antenna driven by 'port1' sitting above a horizontal dark-grey hatched plane labelled 'infinite PEC ground plane (ground_plane = \"-z\")'. Enclosing the antenna on the top and four vertical sides (5-face box, lower box face on the PEC ground plane) is the green 'Near2FarMonitor' box with outward normal arrows 'n̂', blue tangential magnetic surface current arrows 'M_s = −n̂ × E', and orange tangential electric surface current arrows 'J_s = n̂ × H'. Below the PEC ground plane, draw the dashed mirror-image 5-face box in light orange/blue labelled 'exact image theory: image currents'. RIGHT PANEL (45% width): Connected from the left panel by a thick grey arrow labelled 'vector radiation integrals (Balanis 2016)'. Draw a 3D upper half-space hemisphere dome above the ground plane with polar angle arc 'theta in [0, pi/2]', azimuthal angle arc 'phi in [0, 2*pi]', and a 3D radiation lobe inside the upper half-space. On the hemisphere surface mark orthogonal far-field unit vectors with labels 'get_farfield(TH, PH): Etheta, Ephi, Htheta, Hphi', 'directivity(TH, PH)', 'radiated_power()', and 'ludwig3(ff[\"Etheta\"], ff[\"Ephi\"], PH, reference=\"x\"): co, cross'."
+  },
+  {
+   "id": "fig10_3_floquet_diffraction_orders",
+   "subsection": "10.5",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    1858,
+    1860,
+    1865,
+    1866,
+    1869,
+    1870,
+    1871,
+    1872,
+    1873,
+    1876
+   ],
+   "caption": "Figure 10.3: Floquet diffraction-order decomposition with DiffractionMonitor. Tangential fields recorded on reflection (refl_mon) and transmission (trans_mon) planes are projected onto propagating Floquet orders (m, n), separated into upward ('up', +n̂) and downward ('down', −n̂) waves and linear TE (s) / TM (p) or circular (R / L) polarizations. Using the exact discrete FIT plane-wave impedance ensures the sum of order powers equals FluxMonitor.get_flux() to ~10⁻¹⁵.",
+   "visual_intent": "Central schematic of a periodic or Bloch-periodic metasurface/grating unit cell bounded laterally by dashed vertical lines. In the middle sits a patterned grating bar (green). Below at z = −1.5e-6 is a horizontal orange monitor line labelled 'refl_mon (DiffractionMonitor)'; above at z = +1.5e-6 is a horizontal blue monitor line labelled 'trans_mon (DiffractionMonitor)'. From the bottom, an incident blue arrow labelled '(0, 0) incident order flux: inc_power' travels upward (+n̂). Above trans_mon, blue arrows fan out upward (+n̂) labelled 'T_orders (\"up\", +n̂): propagating Floquet orders (m, n)'. Below refl_mon, orange arrows fan out downward (−n̂) labelled 'R_orders (\"down\", −n̂): propagating Floquet orders (m, n)'. To the right of the unit cell, two clean callout cards: Card 1 'Polarization bases (get_amplitudes)': 'polarization=\"linear\": up_s, up_p, down_s, down_p (TE s / TM p)' and 'polarization=\"circular\": up_R, up_L, down_R, down_L'. Card 2 (green border) 'Exact discrete plane-wave impedance of the FIT scheme': 'sum of order powers = FluxMonitor.get_flux() (to ~10⁻¹⁵ round-off)'."
+  },
+  {
+   "id": "fig10_4_mode_monitors_sparameters",
+   "subsection": "10.6",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    1880,
+    1884,
+    1885,
+    1886,
+    1887,
+    1888,
+    1890,
+    1891,
+    1895,
+    1897,
+    1899,
+    1905,
+    1906
+   ],
+   "caption": "Figure 10.4: Two workflows for multi-port S-parameter extraction. Left: ModeMonitor projects transverse DFT fields (E_t, H_t) onto unit-power discrete waveguide eigenmodes (e_m, h_m) from solve_modes to separate forward (a_m⁺) and backward (a_m⁻) wave amplitudes in a single run. Right: wakis.sparameters.s_matrix drives N LumpedPort feeds one port at a time with matched Z₀ terminations on the other N−1 ports, computes Kurokawa power waves (a_j, b_i), checks passivity, and writes Touchstone .sNp files.",
+   "visual_intent": "Two equal panels side by side. LEFT PANEL headed '1. Waveguide Mode Orthogonality (ModeMonitor)': draw a 3D waveguide section with two green cross-sectional port planes: left plane 'mon1 (port 1, normal â)' and right plane 'mon2 (port 2, normal â)'. At port 1 show a forward blue arrow 'a₁⁺(f)' and reflected orange arrow 'a₁⁻(f)'; at port 2 show transmitted blue arrow 'a₂⁺(f)'. Below the waveguide display the exact overlap equations from the manual: 'a_m⁺(f) = ¼ ∬_port (E_t × h_m* + e_m* × H_t) · â dA', 'a_m⁻(f) = ¼ ∬_port (E_t × h_m* − e_m* × H_t) · â dA', and 'S₁₁(f) = a₁⁻(f) / a₁⁺(f),   S₂₁(f) = a₂⁺(f) / a₁⁺(f)'. RIGHT PANEL headed '2. Multi-Port Lumped S-Matrix (wakis.sparameters.s_matrix)': show a 2-port microwave filter block with 'port1' and 'port2' (LumpedPort, Z₀ = 50 Ω). Show Run 1 ('port1 driven, port2 terminated in Z₀') and Run N ('one port driven per run, N−1 ports terminated in matched Z₀'). Below, show the Kurokawa power-wave definitions: 'a_j = (V_j + Z₀ I_j) / (2√Z₀)', 'b_i = (V_i − Z₀ I_i) / (2√Z₀)', followed by an arrow to a green output box 'S(f) shape (n_freq, N, N) → write_touchstone(\"filter.s2p\")' and passivity badge 'passivity check: σ_max(S(f)) ≤ 1'."
+  },
+  {
+   "id": "fig10_5_harminv_resonance",
+   "subsection": "10.7",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    1912,
+    1914,
+    1916,
+    1918,
+    1920
+   ],
+   "caption": "Figure 10.5: High-resolution resonance extraction with harminv (ResonanceMonitor) versus standard FFT. Left: a short post-excitation cavity ring-down signal x(t) recorded over a short window (T_sim ≪ Q / f₀), where resolving Q = 10⁵ at f₀ = 2 GHz by FFT would require T_sim ≫ 50 μs (~10⁷ steps). Right: standard FFT has coarse bin spacing Δf_FFT = 1 / T_sim, whereas harminv fits x(t) to a sum of damped complex exponentials via the Filter Diagonalization Method (method='fdm') or Matrix Pencil Method (method='pencil') to recover resonant frequencies f_k to 4–6 digits and quality factors Q_k = f_k / (2 g_k) > 10⁶.",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script): Two panels side by side (48% left, 52% right). Synthesize a deterministic damped complex exponential ring-down signal from the exact manual formula (line 1918): x(t) = sum_{k=1}^K a_k * exp(2j * pi * (f_k + 1j * g_k) * t), with parameters around f_0 = 2 GHz (line 1914) and high quality factor Q_k = f_k / (2 * g_k) (line 1918) sampled over a short post-excitation window T_sim of a short window where T_sim is much shorter than 'Q / f_0 = 50 us (~10^7 time steps)' for 'Q = 10^5 at f_0 = 2 GHz' (line 1914). LEFT PANEL: Plot Re[x(t)] inside the short recorded window [0, T_sim] in solid blue and the continuation of the exponential decay envelope for t > T_sim in dashed grey, with a vertical red line at t = T_sim labelled 'T_sim: a short window' and grey annotation 'T_sim >> Q / f₀ = 50 μs (~10⁷ time steps) needed by FFT for Q = 10⁵ at f₀ = 2 GHz'. Under the panel display the exact model equation: 'x(t) = ∑_{k=1}^K a_k exp(2πi (f_k + i g_k) t),   Q_k = f_k / (2 g_k)'. RIGHT PANEL: Plot the magnitude of the short-window FFT |FFT(x)| vs frequency f in red/grey step-bars, showing coarse FFT bins with a double-headed red arrow labelled 'Δf_FFT = 1 / T_sim'. Overlay the exact pole locations (f_k, Q_k) recovered by harminv as tall sharp blue stems topped with blue circles, labelled 'harminv (ResonanceMonitor): method=\"fdm\" or \"pencil\"' and green badge 'f_k to 4–6 significant digits and Q > 10⁶ from a short window."
+  }
+ ]
+}

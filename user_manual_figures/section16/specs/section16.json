@@ -1,0 +1,71 @@
+{
+ "section": "section16",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: host RAM and primary field arrays in blue, GPU VRAM and magnetic/auxiliary arrays in orange, hardware limits and structural operators in dark grey, fused/matrix-free and within-budget items in green, setup peaks, CSR overhead or out-of-budget items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig16_1_estimate_preflight",
+   "subsection": "16.1",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2689,
+    2695,
+    2698,
+    2701,
+    2702,
+    2703,
+    2704,
+    2705,
+    2706,
+    2707,
+    2708,
+    2709,
+    2713,
+    2714,
+    2718
+   ],
+   "caption": "Figure 16.1: Pre-flight resource planning with wakis.estimate before launching a 3D time-domain or adjoint run. Simulation configuration parameters feed empirical models (estimate, estimate_unstructured, adjoint_plan) calibrated on 32³ to 160³ grids, and preflight(est, machine=...) checks predicted host RAM and GPU VRAM against target hardware envelopes ('laptop' or 'g2-standard-16').",
+   "visual_intent": "A three-stage left-to-right pipeline diagram. STAGE 1 (left, blue input cards) 'Simulation inputs': top card 'Structured: cells=(100, 100, 200), steps=5000, dtype=\"float64\", backend=\"gpu\", cpml=True, conformal=\"all\", fused=True, monitors=[(50, 100*100, 6)]'; bottom card 'Unstructured: n_cells=100_000, steps=2000, dim=3, eigen=False'. STAGE 2 (centre, dark grey box) 'wakis.estimate (calibrated 32³–160³)': three function badges 'estimate(...)', 'estimate_unstructured(...)', and 'adjoint_plan(...)' (plus CLI tag 'python -m wakis.estimate'), outputting three horizontal bars: blue 'Host RAM (steady & setup peak)', orange 'GPU VRAM', and grey 'Estimated wall time'. STAGE 3 (right) 'preflight(est, machine=...)': two hardware target boxes compared against the bars: top box 'machine=\"laptop\" (2 GB cap)' with red warning badge 'exceeds budget → problems list'; bottom box 'machine=\"g2-standard-16\" (64 GB RAM + 24 GB GPU)' with green check badge 'len(problems) == 0: safe to launch'."
+  },
+  {
+   "id": "fig16_2_cell_memory_breakdown",
+   "subsection": "16.2",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2732,
+    2733,
+    2734,
+    2736,
+    2738,
+    2739,
+    2740,
+    2741,
+    2742,
+    2743,
+    2744,
+    2745,
+    2746,
+    2749
+   ],
+   "caption": "Figure 16.2: Empirical memory footprint per grid cell in wakis/estimate.py (before the 1.25× safety factor). Left: why a SolverFIT3D cell consumes 0.6–1.4 kB instead of just 6 × 8 = 48 B for raw (E_x, E_y, E_z, H_x, H_y, H_z) float64 fields—upstream Wakis stores explicit CSR curl matrices (D, Dt, tDsiDmuiDaC, itDaiDepsDstC) alongside geometric and material tensors (L, tL, S, tS, ieps, imu, sigma, E, H, J). Right: measured Host RAM and GPU VRAM bytes per cell across solver configurations, showing steady-state footprints and conformal setup peaks.",
+   "visual_intent": "SCRIPTED PLOTTING RECIPE (matplotlib, two panels side by side, 16:9, using the exact numbers from lines 2732–2749): LEFT PANEL (34% width) '48 B naive vs ~0.6–1.4 kB actual': draw a visual stack comparing a tiny green bar at the bottom labelled '6 × 8 = 48 B: (E_x, E_y, E_z, H_x, H_y, H_z)' against the full cell storage stack in blue/grey blocks labelled 'CSR curl matrices: D, Dt, tDsiDmuiDaC, itDaiDepsDstC' and 'Grid & material tensors: L, tL, S, tS, ieps, imu, sigma, E, H, J', plus a bottom grey note 'Fixed Python/SciPy overhead: 392–587 MB | ×1.25 safety factor | ×2.0 for complex128 Bloch | ÷P per cell for MPI (n_ranks=P)'. RIGHT PANEL (66% width) 'Empirical bytes per cell (wakis/estimate.py)': horizontal grouped bar chart with exact numerical labels at bar tips for the 7 Cartesian configurations (and an inset callout for 3D tetrahedral 'UnstructuredFIT3D: 2,523 B/tet, 396 MB fixed, 52 ns/tet/step' and 'Dispersive ADE: +88 B/edge steady, +160 B/edge setup peak'): (1) 'Plain CPU (float64, PEC)': blue bar = 1109 B/cell; (2) 'Plain CPU (float32, PEC)': blue bar = 813 B/cell; (3) 'CPML CPU (float64)': blue bar = 953 B/cell; (4) 'CPML GPU (float64, CuPy)': blue Host RAM bar = 940 B/cell, orange GPU VRAM bar = 736 B/cell, plus hatched green extension '+380 B/cell (fused=True → 1,116 B/cell)'; (5) 'CPML GPU (float32, CuPy)': blue Host RAM bar = 605 B/cell, orange GPU VRAM bar = 457 B/cell; (6) 'Conformal (all, float64)': blue steady bar = 1109 + 191 = 1300 B/cell, red hollow extension to '1,339 B/cell setup peak', orange VRAM increment '+142 B/cell', plus annotation '+4,895 B / cut cell'; (7) 'Conformal (tensor, float64)': blue steady bar = 1109 + 311 = 1420 B/cell, red hollow extension to '1,453 B/cell setup peak', orange VRAM increment '+154 B/cell', plus annotation '+3,137 B / cut cell'. Include a vertical dashed reference line at 48 B labelled '48 B (6 fields only)'."
+  },
+  {
+   "id": "fig16_3_roofline_fused_gpu",
+   "subsection": "16.3",
+   "aspect_ratio": "21:9",
+   "route": "scripted",
+   "source_lines": [
+    2755,
+    2756,
+    2757,
+    2759,
+    2760
+   ],
+   "caption": "Figure 16.3: Why time-domain FIT/FDTD is memory-bandwidth bound and why SolverFIT3D(use_gpu=True, fused=True) accelerates it. Left: updating one electric component E_x performs only 4 floating-point operations while transferring ~40–64 bytes in a matrix-free stencil or >120 bytes when loading CSR indptr/indices. Centre: on a log–log Roofline plot, an arithmetic intensity of 0.1–0.3 FLOP/byte sits far below the 8–15 FLOP/byte hardware ridge point, so throughput is strictly proportional to sustained memory bandwidth divided by bytes per cell update. Right: wakis/gpu_fused.py eliminates CSR index traffic on interior cells and fuses all 6 component updates into 2 passes (step_h, step_e) replayed via a CUDA Graph (FusedLoop) at ~300–600 Mcells/s on an NVIDIA L4.",
+   "visual_intent": "SCRIPTED PLOTTING RECIPE (matplotlib, three panels side by side, 21:9, using exact formulas and values from lines 2755–2760): PANEL 1 (left, 32% width) 'Single-component Yee update (4 FLOPs)': draw the 2D cross-section of one Yee primary edge carrying 'E_x' (blue dot at centre) flanked vertically by 'H_{z,j}' and 'H_{z,j-1}' and horizontally by 'H_{y,k}' and 'H_{y,k-1}' (orange arrows), with the update formula 'E_x ← E_x + α(H_{z,j} − H_{z,j−1}) − β(H_{y,k} − H_{y,k−1})' and badge '4 FLOPs'. Below the stencil, plot a two-bar horizontal comparison of memory traffic per update: red bar '> 120 bytes (CSR SpMV: 32-bit column index + 64-bit value per non-zero)' vs green bar '40–64 bytes (matrix-free register offsets + cache reuse)'. PANEL 2 (centre, 36% width) 'Roofline model (log–log)': plot Arithmetic Intensity [FLOP/byte] on a log-scale horizontal axis and schematic log-scale attainable throughput on the vertical axis (no unquoted tick numbers): draw two parallel two-segment piecewise-linear log–log Roofline curves (dark grey for CPU sparse, green for GPU HBM/GDDR6), shade the vertical grey band at the hardware ridge point '8–15 FLOP/byte' separating the sloped 'memory-bandwidth bound' region from the flat 'compute bound' plateau, and shade the vertical blue/orange operating band at 'Arithmetic Intensity ≈ 0.1–0.3 FLOP/byte'. Draw a vertical green arrow inside the 0.1–0.3 FLOP/byte band from the CSR operating point up to the matrix-free GPU fused operating point ('3× less memory traffic + HBM/GDDR6 bandwidth'). PANEL 3 (right, 32% width) 'Standard CSR vs wakis/gpu_fused.py': top row shows 6 red boxes ('6× CSR SpMV launches + indptr/indices traffic'); bottom row shows a green rounded container labelled 'CUDA Graph (FusedLoop): ~300–600 Mcells/s on NVIDIA L4' containing exactly two green pass boxes 'step_h' and 'step_e'."
+  }
+ ]
+}

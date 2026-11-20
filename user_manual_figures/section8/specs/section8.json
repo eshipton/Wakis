@@ -1,0 +1,113 @@
+{
+ "section": "section8",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G and its quantities in blue, dual grid G-tilde and its quantities in orange, exact/topological items in dark grey, approximate/material items in green, failure or warning items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig8_1_beam_direct_vs_tfsf",
+   "subsection": "8.1",
+   "route": "generated",
+   "source_lines": [
+    1498,
+    1500,
+    1502,
+    1516,
+    1517,
+    1518
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 8.1: Particle-beam excitation with wakis.sources.Beam: direct vs. TF/SF injection. Across top: a rigid Gaussian bunch of charge q, RMS length σ_z, transverse offset (x_s, y_s), and velocity v = βc moving along +z. Left: source_type='direct' deposits J_z along the beam line inside metallic beam pipes. Right: source_type='tfsf' precomputes the exact 2D transverse TEM self-field (E_⊥^beam, H_⊥^beam) on the entrance/exit pipe cross-section and injects it on the boundary planes so the bunch enters without artificial transition radiation.",
+   "visual_intent": "Two panels side by side beneath a shared top banner displaying the Gaussian beam current density from line 1502: 'J_z(x, y, z, t) = (q v / (√(2π) σ_z)) δ_h(x − x_s) δ_h(y − y_s) exp(−(z − z₀ − vt)² / (2σ_z²))'. LEFT PANEL (blue border, heading '1. Direct injection: source_type=\"direct\" (default)'): a longitudinal cavity cross-section with metallic entrance and exit beam pipes ('bc_low=[..., \"pec\"] or \"cpml\"'). Along the axis (x_s, y_s), draw a blue Gaussian bunch ellipse moving right with arrow 'v = βc,  q, σ_z' depositing current 'J_z' directly on the grid edges. At the entrance plane, draw small red wavefront ripples labelled 'artificial transition radiation if injected at a bare boundary'. RIGHT PANEL (green border, heading '2. TF/SF beam injection: source_type=\"tfsf\"'): the same cavity and beam pipes, with two vertical green Huygens planes at the entrance and exit pipe cross-sections. An inset shows the 2D pipe cross-section with radial blue arrows 'E_⊥^beam' and azimuthal orange loops 'H_⊥^beam' labelled 'precomputed 2D TEM self-field (2D Poisson or Beam.tfsf_template=\"operator\")'. Green badge under the cavity: 'self-field injected on entrance/exit planes: no artificial transition radiation'."
+  },
+  {
+   "id": "fig8_2_waveforms_and_normalization",
+   "subsection": "8.2",
+   "route": "scripted",
+   "source_lines": [
+    1494,
+    1522,
+    1524,
+    1530,
+    1531,
+    1532,
+    1533,
+    1534,
+    1538,
+    1539,
+    1541,
+    1550,
+    1556,
+    1562,
+    1563
+   ],
+   "aspect_ratio": "21:9",
+   "caption": "Figure 8.2: Soft current sources, time waveforms, and broadband spectral normalization. Left: GaussianSource(frequency=5e9, fwidth=2e9, cutoff=5.0) with peak at t₀ = start_time + cutoff · σ_t (σ_t = 1/(2π fwidth)) vs. ContinuousSource(frequency=5e9, ramp_time=2e-9). Centre: spatial support of CurrentSource / MagneticCurrentSource as a point dipole (size=(0, 0, 0), moment I·l [A·m]) or an oblique-incidence sheet source (size=(∞, ∞, 0), amp_func=exp(−ik_x x)). Right: dividing a recorded monitor spectrum F(f) by S(f) = pulse.fourier_transform(f) removes the pulse envelope to recover the continuous-wave impulse response across the entire bandwidth from a single run.",
+   "visual_intent": "Scripted Matplotlib recipe (three panels in a row, 18.06 × 7.68 in at 200 dpi). LEFT PANEL (heading 'Time profiles: src_time(t)', lines 1530–1539): instantiate pulse = GaussianSource(frequency=5e9, fwidth=2e9, cutoff=5.0) and cw = ContinuousSource(frequency=5e9, ramp_time=2e-9) from wakis.sources (or evaluate their exact analytical formulas). Top sub-axes: plot pulse(t) versus t in ns over [0, 1.5] ns in blue, with dashed grey Gaussian envelope ±exp(−(t−t₀)²/(2σ_t²)), marking 't₀ = start_time + cutoff · σ_t', 'σ_t = 1/(2π fwidth)', and 'pulse.end_time = 1.59 ns'. Bottom sub-axes: plot cw(t) versus t in ns over [0, 2.5] ns in orange, marking 'ramp_time = 2 ns' and 'f₀ = 5 GHz'. CENTRE PANEL (heading 'Spatial sources: CurrentSource / MagneticCurrentSource', lines 1541–1558): top sub-panel shows a 3D grid cell with a single highlighted z-edge arrow at center=(0, 0, 0) labelled 'Point dipole: size=(0.0, 0.0, 0.0), amplitude = I·l [A·m]'; bottom sub-panel shows a 2D sheet plane z = −1e-2 with phased x-directed arrows coloured by phase and labelled 'Sheet source: size=(np.inf, np.inf, 0.0), amp_func = exp(−1j * kx * x) [A/m]'. RIGHT PANEL (heading 'Broadband CW normalization', lines 1494, 1562–1563): plot against frequency f ∈ [3, 7] GHz: (1) source DFT magnitude |S(f)| = |pulse.fourier_transform(freqs)| where 'S(f) = Σ_n s(t_n) e^(−2πi f t_n) Δt' (dashed grey Gaussian curve), (2) a resonant monitor spectrum |F(f)| = |H(f) · S(f)| modulated by the source envelope (blue curve), and (3) the normalized quotient |F(f) / S(f)| = |H(f)| (green curve), with a green badge 'F(f) / S(f) (or power / |S(f)|²): exact CW response across bandwidth in 1 run'."
+  },
+  {
+   "id": "fig8_3_tfsf_plane_wave_box",
+   "subsection": "8.3",
+   "route": "generated",
+   "source_lines": [
+    1567,
+    1569,
+    1575,
+    1580,
+    1581,
+    1583,
+    1588,
+    1590,
+    1592,
+    1594
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 8.3: Total-Field / Scattered-Field plane-wave excitation (wakis.tfsf.TFSFSource). Left: a Huygens box partitions the grid into an interior Total-Field (TF) region containing the scatterer and an exterior Scattered-Field (SF) region containing only outgoing scattered waves. Right: instead of evaluating E_inc(x, t) = s(t − x/c) analytically (which leaks 10⁻³–10⁻² because v_p(ω) ≠ c on the 3D grid), TFSFSource advances a 1D auxiliary FIT line sharing the 3D grid's exact cell lengths (grid.L, grid.tL) and applies the discrete commutator correction on the Huygens faces, reducing empty-box leakage to round-off (≲ 10⁻¹⁵).",
+   "visual_intent": "Two panels side by side. LEFT PANEL (heading 'TFSFSource Huygens Box'): a 2D cross-section of a 3D grid surrounded by outer absorbing walls. Inside the grid, draw a dashed green square labelled 'Huygens box: size=(2.4e-6, 2.4e-6, 2.4e-6)'. Shade the interior of the square light blue, containing a circular scatterer in 'background_eps_r=1.0' and vertical wavefront bars moving right with arrow 'direction=\"+x\", polarization=\"z\"', labelled 'Total-Field (TF) region: E_tot = E_inc + E_sca'. Leave the exterior ring between the Huygens box and the outer boundary white with faint outgoing ripples from the scatterer, labelled 'Scattered-Field (SF) region: E_sca only'. At the bottom of the left panel, compare two badges: red badge 'analytical E_inc = s(t − x/c): leaks 10⁻³–10⁻² (since v_p(ω) ≠ c)' vs green badge 'Wakis 1D auxiliary FIT line: empty-box leakage ≲ 10⁻¹⁵ (round-off)'. RIGHT PANEL (heading 'Exact Discrete Commutator Injection'): top shows a 2D slice of the 3D grid along +x (including graded cell widths), and directly underneath it a 1D auxiliary FIT line with matching primary edge lengths 'grid.L' (blue) and dual edge lengths 'grid.tL' (orange) carrying 'e_inc, h_inc'. Vertical green arrows connect the 1D auxiliary line to the left and right faces of the Huygens box. Below the diagram, display the two exact commutator update equations from line 1592: 'H += −Δt (M_h A − A M_e) e_inc' and 'E += Δt (M_e B − B M_h) h_inc'."
+  },
+  {
+   "id": "fig8_4_waveguide_eigenmode_source",
+   "subsection": "8.4",
+   "route": "generated",
+   "source_lines": [
+    1598,
+    1600,
+    1607,
+    1611,
+    1615,
+    1619,
+    1623,
+    1625,
+    1629
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 8.4: Waveguide eigenmode solver and modal launcher (solve_modes, ModeSource in wakis.mode_solver). Left: solve_modes solves the discrete 2D cross-sectional eigenproblem on the 3D solver's own staggered grid lengths (L_b, L_c, tL_b, tL_c) and conformal/subpixel ieps and imu slices, relating the continuous propagation constant β to the discrete eigenvalue via β̃ = (2/Δa) sin(βΔa/2). Right: ModeSource launches a pure forward ('+') or backward ('−') guided mode with return loss |S₁₁| < −60 dB on a uniform waveguide, avoiding the higher-order and radiation modes excited by a naive dipole or uniform sheet.",
+   "visual_intent": "Two panels side by side. LEFT PANEL (blue border, heading '1. Discrete 2D cross-section eigenproblem (solve_modes)'): draw a rectangular waveguide cross-section normal to z ('size=(0.02286, 0.01016, 0.0), frequency=10e9, n_modes=2') overlaid with the staggered 2D primary grid ('L_b, L_c' in blue) and dual grid ('tL_b, tL_c' in orange) plus green material tags 'conformal/subpixel ieps, imu slices', showing the fundamental TE₁₀ electric field arrows inside the cross-section. Below the cross-section, display the discrete dispersion relation from line 1629: 'β̃ = (2 / Δa) sin(β Δa / 2)' and output badge 'm.beta [rad/m],  m.neff'. RIGHT PANEL (heading '2. Modal excitation in 3D waveguide (ModeSource)'): two longitudinal waveguide sketches stacked vertically. Top sketch (red warning border, 'Naive dipole or uniform sheet'): a point dipole inside the guide radiates both forward and backward and excites unwanted higher-order and radiation modes (jagged red arrows). Bottom sketch (green border, 'ModeSource(direction=\"+\", mode_index=0, amplitude=1.0)'): a green port plane at z = −0.02 launches a clean unidirectional fundamental mode propagating in '+z' carrying 'unit-power mode: |amplitude|² W', with a green badge 'exact discrete eigenmode of 3D guide: |S₁₁| < −60 dB (studies/mode_ports/)'."
+  },
+  {
+   "id": "fig8_5_lumped_elements_and_ports",
+   "subsection": "8.5",
+   "route": "generated",
+   "source_lines": [
+    1633,
+    1635,
+    1644,
+    1645,
+    1646,
+    1648,
+    1649,
+    1650,
+    1654,
+    1655,
+    1658,
+    1659,
+    1660,
+    1661,
+    1669,
+    1670
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 8.5: Lumped circuit elements and driven lumped ports (wakis.lumped). Left: LumpedPort spans a feed gap (size=(0.0, 0.0, 2e-3) along component='z') with a driven waveform src_time=pulse and internal reference resistor impedance=50.0 Ω (or src_time=None for a passive matched load), directly providing port input impedance Z_in(f) and reflection coefficient S₁₁(f). Right: LumpedElement embeds a passive parallel RLC network (R=100.0 Ω, C=1.5e-12 F, L=2.0e-9 H) across the grid edges of a gap.",
+   "visual_intent": "Two panels side by side. LEFT PANEL (blue border, heading 'Driven LumpedPort (wakis.lumped.LumpedPort)'): draw two vertical metallic antenna arms (dark grey) separated by a 2 mm vertical feed gap ('center=(0.0, 0.0, 0.0), size=(0.0, 0.0, 2e-3), component=\"z\"') spanned by blue primary grid edges. Overlay the equivalent Norton/Thevenin port circuit across the gap: source 'src_time=pulse (or None for passive matched termination)' and resistor 'impedance = 50.0 Ω'. From the port, draw an arrow to two post-processing badges at the bottom: blue badge 'Z_in = port1.impedance_in(freqs)' and green badge 'S11 = port1.s11(freqs)'. RIGHT PANEL (orange border, heading 'Passive LumpedElement (wakis.lumped.LumpedElement)'): draw a second metallic trace gap ('center=(0.02, 0.0, 0.0), size=(0.0, 0.0, 2e-3), component=\"z\"') spanned by blue primary grid edges. Overlay a three-branch parallel RLC circuit connected across the gap edges: branch 1 resistor 'R = 100.0 [Ohm]', branch 2 capacitor 'C = 1.5e-12 [F]', and branch 3 inductor 'L = 2.0e-9 [H]'."
+  }
+ ]
+}

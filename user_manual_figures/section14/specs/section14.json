@@ -1,0 +1,70 @@
+{
+ "section": "section14",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: longitudinal fields, TM quantities and dispersion-free curves in blue, transverse fields, TE quantities and source/witness beam items in orange, exact/structural items and PEC walls in dark grey, plasma/material and integration items in green, spurious Cherenkov or unstable items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig14_1_wake_panofsky_wenzel",
+   "subsection": "14.1",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2476,
+    2478,
+    2479,
+    2480,
+    2481,
+    2482,
+    2483,
+    2484,
+    2485,
+    2486,
+    2487,
+    2489,
+    2490
+   ],
+   "caption": "Figure 14.1: Co-moving wakefield geometry, the Panofsky–Wenzel 3×3 stencil, and impedance post-processing in WakeSolver. Left: an ultrarelativistic source bunch q_1 with line density λ(s) travels along +z at v = βc at transverse offset r_{⊥,1} = (x_1, y_1) through a structure of length L = z_max − z_min, followed at co-moving lag s = vt − z by a witness charge q_2 at r_{⊥,2} = (x_2, y_2). Centre: WakeSolver records only E_z inside a 3×3 cell tube around (x_test, y_test) and recovers W_⊥ via the Panofsky–Wenzel theorem. Right: Fourier transformation and normalization by the bunch spectrum λ̃(ω) yield Z_∥(ω), Z_⊥(ω) and the loss factor k_loss.",
+   "visual_intent": "Three panels side by side. LEFT PANEL (45% width) 'Co-moving wake integration': an axisymmetric cavity with beam pipes extending horizontally from 'z_min' to 'z_max' (bracket below labelled 'L = z_max − z_min', walls in dark grey). Moving right along '+z' at speed 'v = βc' is an orange Gaussian ellipse labelled 'source bunch q_1, λ(s)' at offset 'r_{⊥,1} = (x_1, y_1)'. Trailing behind by a horizontal double-headed arrow labelled 's = vt − z (s > 0 behind)' is an orange dot 'witness q_2' at 'r_{⊥,2} = (x_2, y_2)', flying along a green shaded horizontal tube labelled '3×3 E_z integration tube: t = (z + s)/v'. Below: 'W_∥(x_2, y_2, s) = −(1/q_1) ∫_{z_min}^{z_max} E_z(x_2, y_2, z, t=(z+s)/v) dz'. CENTRE PANEL (25% width) 'Panofsky–Wenzel 3×3 stencil': a 3×3 square grid of cells in the (x, y) cross-section centred on '(x_test, y_test)' (blue dot at centre and its neighbours carrying 'E_z' only), with horizontal and vertical finite-difference arrows labelled '∇_{⊥,2}'. Below: 'W_⊥ = ∇_{⊥,2} ∫_{-∞}^s W_∥(s′) ds′' and badge 'records only E_z'. RIGHT PANEL (30% width) 'Impedance & loss factor': a vertical flow of three boxes from 'W_∥(s), W_⊥(s) [V/pC]' → arrow labelled 'FFT / (v λ̃(ω))' → 'Z_∥(ω), Z_⊥(ω) [Ω]' and 'k_loss = ∫ W_∥(s) λ(s) ds = (1/π) ∫_0^∞ Re Z_∥(ω) |λ̃(ω)|² dω'."
+  },
+  {
+   "id": "fig14_2_tete_dispersion",
+   "subsection": "14.2",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2498,
+    2501,
+    2502,
+    2504,
+    2505,
+    2506,
+    2523,
+    2528
+   ],
+   "caption": "Figure 14.2: Eliminating numerical Cherenkov radiation with the explicit Dohlus–Zagorodnov TE/TM wake scheme (scheme='tete'). Left: longitudinal numerical phase velocity v_ph(k_z)/c from the exact vacuum dispersion relations. On a standard 3D Yee grid (scheme='yee'), the Courant limit cΔt ≤ 1/√(Δx⁻² + Δy⁻² + Δz⁻²) < Δz forces cΔt/Δz < 1 and v_ph(k_z) < c, so an ultrarelativistic bunch (v = c) travels faster than the grid phase velocity and emits spurious numerical Cherenkov radiation. In scheme='tete' at the magic timestep Δt = Δz/c (when Δz ≤ (Δx⁻² + Δy⁻²)⁻¹/²), all axial waves (k_x = k_y = 0) propagate at exact phase speed v_ph(k_z) = c for every longitudinal wavenumber k_z. Right: the longitudinal-TM / longitudinal-TE field splitting and symmetric Störmer–Verlet time stepping.",
+   "visual_intent": "SCRIPTED PLOTTING RECIPE (matplotlib, two panels side by side, 16:9): LEFT PANEL (55% width) 'Longitudinal phase velocity v_ph(k_z) / c': plot longitudinal wavenumber k_z Δz on the horizontal axis and normalized phase velocity v_ph(k_z) / c on the vertical axis (with horizontal tick labels '0' and 'π' and vertical tick label '1' at v_ph = c): (1) Blue horizontal line at v_ph(k_z) / c = 1 computed from the exact TE/TM vacuum dispersion relation sin²(ωΔt/2)/(cΔt)² = sin²(k_zΔz/2)/Δz² + (sin²(k_xΔx/2)/Δx² + sin²(k_yΔy/2)/Δy²)(1 − (cΔt/Δz)² sin²(k_zΔz/2)) at the magic timestep Δt = Δz / c (c * dt / dz = 1.000000) for axial waves k_x = k_y = 0, labelled \"scheme='tete' at Δt = Δz/c (k_x = k_y = 0): v_ph(k_z) = c exact (matches bunch v = c)\". (2) Green dashed curve from the same TE/TM dispersion relation at Δt = Δz / c for a non-zero transverse mode (k_x, k_y ≠ 0) showing the factor (1 − (cΔt/Δz)² sin²(k_zΔz/2)). (3) Red solid curve for standard 3D Yee (scheme='yee') where cΔt ≤ 1/√(Δx⁻² + Δy⁻² + Δz⁻²) < Δz gives ωΔt = 2 arcsin((cΔt/Δz) sin(k_zΔz/2)) and v_ph(k_z) < c; shade the gap between the red curve and v = c in light red labelled 'v_ph(k_z) < c: numerical Cherenkov radiation (1.2–660 V/pC in smooth PEC pipe vs ≤ 3×10⁻⁸ V/pC for tete)'. RIGHT PANEL (45% width) 'TE/TM splitting & magic-step condition': top half shows a horizontal time axis with integer ticks 'n Δt', '(n+1) Δt' carrying blue boxes 'longitudinal-TM: (H_x, H_y, E_z)' and half-integer ticks '(n+1/2) Δt' carrying orange boxes 'longitudinal-TE: (E_x, E_y, H_z)', linked by curved arrows labelled 'Störmer–Verlet half-kick / kick / half-kick'. Bottom half shows the stability and magic-step box: 'cΔt ≤ Δz' and 'cΔt ≤ (Δx⁻² + Δy⁻²)⁻¹/²', with green highlight 'magic timestep Δt = Δz / c when Δz ≤ (Δx⁻² + Δy⁻²)⁻¹/²'."
+  },
+  {
+   "id": "fig14_3_cold_plasma_wake",
+   "subsection": "14.3",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2537,
+    2539,
+    2541,
+    2542,
+    2543,
+    2544,
+    2546,
+    2550,
+    2553,
+    2554,
+    2558,
+    2559
+   ],
+   "caption": "Figure 14.3: Linear cold-plasma wakefield in a cylindrical PEC pipe of radius a (wakis.plasma). Left: radial profile of the screened Poisson Green's function g(r; 0) = K_0(k_p r) − [K_0(k_p a)/I_0(k_p a)] I_0(k_p r) versus the unscreened free-space Bessel kernel K_0(k_p r), vanishing on the PEC pipe wall r = a. Right: exact closed-form longitudinal wakefield E_z(r, ξ) and transverse force F_x(r, ξ) = (E_⊥ + c ẑ × B)_x as functions of co-moving coordinate ξ = z − ct for the manual's benchmark parameters (n_e = 1.0×10²⁰ m⁻³, λ_p = 3.34 mm, σ_z = 0.5 mm, q = −1.0 nC, r = 0.2 mm, a = 2.0 mm), illustrating the π/2 phase quadrature between E_z (cosine convolution) and F_⊥ (sine convolution).",
+   "visual_intent": "SCRIPTED PLOTTING RECIPE (matplotlib + scipy.special, two panels side by side, 16:9, using the exact formulas in lines 2541–2546 and exact parameters in lines 2553–2559): Parameters: n_e = 1.0e20 m^-3, ω_p = √(n_e e²/(ε_0 m_e)) = 5.64e11 rad/s, k_p = ω_p/c (λ_p = 2π/k_p = 3.34 mm), σ_z = 0.5e-3 m, q = -1.0e-9 C, r = 0.2e-3 m, a = 2.0e-3 m. LEFT PANEL (42% width) 'Screened pipe Green\\'s function g(r; 0)': evaluate for r ∈ [0.05e-3, a] (plotted vs r / a ∈ [0.025, 1.0]): the unscreened free-space kernel K_0(k_p r) (dashed grey) and the PEC-pipe screened Green's function g(r; 0) = K_0(k_p r) − (K_0(k_p a)/I_0(k_p a)) I_0(k_p r) (solid green), plus its radial derivative −dg/dr / k_p (solid orange). Mark the vertical PEC pipe boundary at r / a = 1 with dark grey hatching labelled 'PEC wall r = a (g = 0)' and mark the sampling radius r = 0.2 mm with a vertical dotted line. RIGHT PANEL (58% width) 'Co-moving wake E_z(r, ξ) and F_x(r, ξ)': for ξ = z − ct ∈ [−6.0, 2.0] mm, evaluate the exact integrals E_z(r, ξ) = −(k_p² / (2π ε_0)) g(r; 0) ∫_ξ^∞ q/(√(2π)σ_z) exp(−ξ′²/(2σ_z²)) cos(k_p(ξ − ξ′)) dξ′ (solid blue curve) and F_x(r, ξ) = (k_p / (2π ε_0)) (∂g/∂x) ∫_ξ^∞ q/(√(2π)σ_z) exp(−ξ′²/(2σ_z²)) sin(k_p(ξ′ − ξ)) dξ′ (solid orange curve), overlaid with the shaded grey drive-bunch profile λ(ξ) centred at ξ = 0 ('drive bunch σ_z = 0.5 mm, v = c'). Indicate one plasma wavelength 'λ_p = 2π / k_p = 3.34 mm' with a horizontal double arrow and annotate the π/2 phase offset between 'E_z ~ cos(k_p(ξ − ξ′))' and 'F_⊥ ~ sin(k_p(ξ′ − ξ))'."
+  }
+ ]
+}

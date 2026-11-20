@@ -1,0 +1,77 @@
+{
+ "section": "section7",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G and its quantities in blue, dual grid G-tilde and its quantities in orange, exact/topological items in dark grey, approximate/material items in green, failure or warning items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig7_2_ade_dispersive_poles",
+   "subsection": "7.2",
+   "route": "scripted",
+   "source_lines": [
+    1380,
+    1384,
+    1388,
+    1390,
+    1391,
+    1392,
+    1394,
+    1396,
+    1398,
+    1400
+   ],
+   "aspect_ratio": "21:9",
+   "caption": "Figure 7.2: Multi-pole dispersive materials via Auxiliary Differential Equations (wakis.dispersive). First three panels: exact susceptibility curves Re χ_p(ω) (blue) and Im χ_p(ω) ≤ 0 (orange, exp(+iωt) convention) and time-domain ODEs for Lorentz, Drude, and Debye poles. Right panel: explicit second-order ADE time stepping updates P_p^{n+1} at integer steps from (P_p^n, P_p^{n−1}, E^n) before subtracting Σ_p (P_p^{n+1} − P_p^n) in the electric-field update.",
+   "visual_intent": "Scripted Matplotlib recipe (four panels in a row, 18.06 × 7.68 in at 200 dpi). Across the top of Panels 1–3, display the multi-pole permittivity equation from line 1384: 'ε_r(ω) = ε_∞ + Σ_p χ_p(ω) + σ / (iωε₀)'. PANEL 1 ('Lorentz(delta_eps, omega_0, gamma)', line 1390): evaluate χ_p(ω) = Δε ω₀² / (ω₀² − ω² + iγω) on u = ω/ω₀ ∈ [0, 2] with normalized damping γ/ω₀ = 0.2; plot Re χ_p (blue solid) and Im χ_p ≤ 0 (orange dashed) with a vertical grey dashed line at ω = ω₀ (no numeric y-ticks). Under the plot, typeset 'χ_p(ω) = Δε ω₀² / (ω₀² − ω² + iγω)' and 'd²P_p/dt² + γ dP_p/dt + ω₀² P_p = ε₀ Δε ω₀² E'. PANEL 2 ('Drude(omega_p, gamma)', line 1391): evaluate χ_p(ω) = −ω_p² / (ω² − iγω) on u = ω/ω_p ∈ [0.25, 2.0] with γ/ω_p = 0.2; plot Re χ_p < 0 (blue solid) and Im χ_p ≤ 0 (orange dashed) with a tick mark at ω = ω_p. Under the plot, typeset 'χ_p(ω) = −ω_p² / (ω² − iγω)' and 'd²P_p/dt² + γ dP_p/dt = ε₀ ω_p² E'. PANEL 3 ('Debye(delta_eps, tau)', line 1392): evaluate χ_p(ω) = Δε / (1 + iωτ) on a log axis u = ωτ ∈ [0.05, 20]; plot Re χ_p (blue solid) and Im χ_p ≤ 0 (orange dashed, minimum at ω = 1/τ marked by a vertical grey dashed line). Under the plot, typeset 'χ_p(ω) = Δε / (1 + iωτ)' and 'τ dP_p/dt + P_p = ε₀ Δε E'. PANEL 4 ('Explicit 2nd-Order ADE Update', lines 1396–1400): draw a two-stage flow diagram for step n → n+1: Stage 1 box (green border) takes inputs 'P_p^{n−1}, P_p^n, E^n' and computes 'P_p^{n+1}' via '(P_p^{n+1} − 2P_p^n + P_p^{n−1})/Δt² + γ_p (P_p^{n+1} − P_p^{n−1})/(2Δt) + ω_{0,p}² P_p^n = ε₀ Δε_p ω_{0,p}² E^n' (with note 'Debye & σ: Crank–Nicolson on [nΔt, (n+1)Δt]'); Stage 2 box (blue border) takes 'H^{n+1/2}, J_s^{n+1/2}' and 'Σ_p (P_p^{n+1} − P_p^n)' to advance 'ε₀ ε_∞ (E^{n+1} − E^n) = Δt (∇×H^{n+1/2} − J_s^{n+1/2}) − Σ_p (P_p^{n+1} − P_p^n)', with bottom grey badge 'query continuous mat.epsilon(f) or exact discrete mat.epsilon_discrete(f, dt=solver.dt)'."
+  },
+  {
+   "id": "fig7_3_tensor_dispersive_network",
+   "subsection": "7.3",
+   "route": "generated",
+   "source_lines": [
+    1445,
+    1447,
+    1449,
+    1450,
+    1451,
+    1452,
+    1453,
+    1454,
+    1455
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 7.3: Time-domain subpixel averaging at dispersive interfaces via a passive sub-capacitor network (wakis.tensor_dispersive, DispersiveNetwork). Left: a dual cell cut by an interface with normal n̂ and material volume fill fractions f_m has diagonal Kottke elastance T_{cc}(ω) combining a normal harmonic sum (weight n_c²) and a tangential arithmetic sum (weight 1 − n_c²). Right: Wakis realizes T_{cc}(ω) exactly in the time domain as series sub-capacitors (one per material for the normal field, plus one mixed parallel capacitor for the tangential field) driven by ΔD_e, keeping the stored energy a sum of positive quadratic forms.",
+   "visual_intent": "Two panels side by side. LEFT PANEL (heading 'Cut dual cell at dispersive interface'): a square dual cell split by a curved interface with unit normal arrow 'n̂' (with component 'n_c' along edge axis c) into fill fraction 'f₁: ε₁(ω)' (shaded light orange, e.g. dispersive metal) and fill fraction 'f₂: ε₂(ω)' (shaded light blue, e.g. dielectric). Below the cell, display Kottke's frequency-domain diagonal elastance from line 1451: 'T_{cc}(ω) = n_c² Σ_m (f_m / ε_m(ω)) + (1 − n_c²) / (Σ_m f_m ε_m(ω))' with two braces under the two terms: 'normal E_⊥: capacitors in series' under the first term and 'tangential E_∥: capacitors in parallel' under the second term. RIGHT PANEL (green border, heading 'Time-domain DispersiveNetwork (wakis.tensor_dispersive)'): an equivalent circuit schematic along edge c driven by an input arrow 'shared displacement increment ΔD_e'. The branch contains two groups connected in series: Group 1 (blue box labelled 'Series normal sub-capacitors (c_m = n_c² f_m)') shows individual material sub-capacitors 'ε₁(ω), voltage u₁' and 'ε₂(ω), voltage u₂' in series, each updated by the standard ADE of wakis.dispersive; Group 2 (orange box labelled 'Mixed parallel sub-capacitor (c_par = 1 − n_c²)') shows a single mixed capacitor with 'ε_∞^par = Σ_m f_m ε_{∞,m}', pole weights 'μ_m = f_m', and voltage 'u_par'. An output summer collects the sub-capacitor voltages into 'E_c = Σ_k c_k u_k'. At the bottom, two green badges: 'stored energy = sum of positive quadratic forms (strictly passive & stable below stability_bound)' and 'attached automatically for conformal=\"all\" or \"tensor\" with DispersiveMaterial'."
+  },
+  {
+   "id": "fig7_4_cold_plasma_wakefield",
+   "subsection": "7.4",
+   "route": "scripted",
+   "source_lines": [
+    1459,
+    1461,
+    1463,
+    1465,
+    1468,
+    1470,
+    1471,
+    1472,
+    1478
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 7.4: Cold unmagnetized electron plasma and linear plasma wakefield (wakis.plasma). Left: relative permittivity ε_r(ω) = 1 − ω_p² / (ω² − iνω) with plasma frequency ω_p = √(n_e e² / (ε₀ m_e)), modeled in Wakis as a Drude(omega_p, collision_rate) pole with ε_∞ = 1; Re ε_r crosses zero at ω = ω_p. Right: analytical linear fluid plasma wakefield (wakis.plasma.linear_wake) excited behind a drive bunch.",
+   "visual_intent": "Scripted Matplotlib recipe (two panels side by side, 13.76 × 7.68 in at 200 dpi). LEFT PANEL (heading 'Cold-plasma permittivity ε_r(ω)', lines 1461–1465, 1470–1472): compute ε_r(ω) = 1 − ω_p² / (ω² − iνω) across u = ω/ω_p ∈ [0.45, 2.5]. Plot the collisionless curve ν = 0 ('collision_rate=0.0') in solid blue and a collisional curve (ν/ω_p = 0.15) with Re ε_r in dashed blue and Im ε_r ≤ 0 in dashed orange. Draw a horizontal grey line at ε_r = 0 and a vertical grey dashed line at ω/ω_p = 1; shade u < 1 in light orange ('ω < ω_p: Re ε_r < 0') and u > 1 in light blue ('ω > ω_p: Re ε_r > 0'). Annotate the equations from lines 1463, 1465, 1470–1472: 'ω_p = √(n_e e² / (ε₀ m_e))', 'ε_r(ω) = 1 − ω_p² / (ω² − iνω)', 'Drude(omega_p, collision_rate) with ε_∞ = 1', and 'n_e = 1e20 m⁻³  ⇒  ω_p ≈ 5.64×10¹¹ rad/s'. RIGHT PANEL (heading 'Analytical linear plasma wakefield (wakis.plasma)', lines 1468, 1478): call wakis.plasma.linear_wake (or evaluate its exact 1D Gaussian-bunch green-function integral sin(k_p(ζ − ζ')) exp(−ζ'²/(2σ_z²))) vs normalized co-moving coordinate k_p s behind the drive bunch; plot the Gaussian drive bunch profile at s = 0 (shaded light blue ellipse/bell) and the trailing sinusoidal longitudinal wakefield oscillation (solid blue curve with envelope in dashed green labelled 'wake_amplitude'), with a bottom badge listing the public API functions from line 1468: 'wakis.plasma: plasma_frequency, cold_plasma, linear_wake, wake_amplitude'."
+  },
+  {
+   "id": "fig7_5_leontovich_sibc",
+   "subsection": "7.5",
+   "route": "generated",
+   "source_lines": [
+    1482,
+    1484
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 7.5: Leontovich Surface Impedance Boundary Condition (use_sibc=True). Left: at RF and microwave frequencies (f ~ 0.1–30 GHz), good conductors such as copper (σ = 5.8×10⁷ S/m) have a skin depth δ = √(2/(ωμσ)) ~ 0.4–6 μm that is orders of magnitude smaller than a millimeter-scale cavity mesh cell. Right: when use_sibc=True, Wakis checks whether δ at fmax is smaller than the grid cell size and replaces volumetric bulk conductivity with the Leontovich SIBC on the conductor surface.",
+   "visual_intent": "Two panels side by side. LEFT PANEL (red warning border, heading 'Scale mismatch: skin depth δ vs millimeter grid cell'): draw a 2D cross-section of a vacuum cavity cell of size labelled 'grid cell Δ_min (~ mm)' meeting a shaded metallic wall labelled 'copper: σ = 5.8×10⁷ S/m,  f ~ 0.1–30 GHz'. A magnifying-glass inset at the metal surface shows the exponentially decaying field profile inside the metal over a microscopic layer labelled 'skin depth δ = √(2 / (ωμσ)) ~ 0.4–6 μm', with a red warning badge 'δ ≪ Δ_min: volumetric mesh cannot resolve skin layer'. RIGHT PANEL (green border, heading 'Leontovich SIBC: SolverFIT3D(..., use_sibc=True, fmax=1e9)'): top half shows a decision diamond containing the exact check from line 1484: 'sigma > 2 / (mu * delta_min^2 * 2*pi*fmax)  (δ(fmax) < Δ_min)'. An arrow 'True' leads to the bottom drawing of the cavity-conductor interface where the bulk metal interior is hatched grey ('no volumetric bulk conductivity stepping') and the boundary face between vacuum and metal is highlighted with a thick green bar labelled 'Leontovich Surface Impedance Boundary Condition (SIBC) applied on conductor surface'."
+  }
+ ]
+}
