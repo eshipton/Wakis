@@ -26,6 +26,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from scipy.constants import c as c_light  # noqa: E402
+
+from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
 from wakis.inverse import projection as ssp  # noqa: E402
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
@@ -370,7 +373,261 @@ def fig13_4_subpixel_smoothed_projection(out_root):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 14.2
+def fig14_2_tete_dispersion(out_root):
+    """Figure 14.2: Eliminating numerical Cherenkov radiation with scheme='tete'.
+
+    Source lines in user_manual.md: 2498, 2501, 2502, 2504, 2505, 2506, 2523, 2528.
+    """
+    out_dir = out_root / "section14"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Query the real Wakis SolverFIT3D API with the exact cell sizes of user_manual.md lines 2512-2523
+    # (dx = dy = 0.10 / 30 m, dz = 0.40 / 200 m = 0.002 m; 6x6x20 grid keeps identical dx, dy, dz)
+    grid = GridFIT3D(-0.01, 0.01, -0.01, 0.01, -0.02, 0.02, 6, 6, 20, verbose=0)
+    solver_tete = SolverFIT3D(
+        grid, scheme="tete", bc_low=["pec", "pec", "pec"], bc_high=["pec", "pec", "pec"], verbose=0
+    )
+    solver_yee = SolverFIT3D(
+        grid, scheme="yee", cfln=1.0, bc_low=["pec", "pec", "pec"], bc_high=["pec", "pec", "pec"], verbose=0
+    )
+    dx, dy, dz = float(grid.dx[0]), float(grid.dy[0]), float(grid.dz[0])
+    s_tete = c_light * solver_tete.dt / dz  # user_manual.md line 2523: 1.000000
+    s_yee = c_light * solver_yee.dt / dz  # user_manual.md line 2498: c dt <= 1/sqrt(dx^-2+dy^-2+dz^-2) < dz
+
+    # Assert magic-step condition and Courant inequality from user_manual.md lines 2498, 2505-2506, 2523
+    dt_trans_max = 1.0 / (c_light * np.hypot(1.0 / dx, 1.0 / dy))
+    assert dz <= c_light * dt_trans_max
+    assert np.isclose(s_tete, 1.0, atol=1e-12), s_tete
+    assert s_yee < 1.0 and np.isclose(
+        c_light * solver_yee.dt, 1.0 / np.sqrt(dx**-2 + dy**-2 + dz**-2), rtol=1e-3
+    )
+
+    # Exact TE/TM vacuum dispersion relation (user_manual.md line 2504):
+    # sin^2(omega dt / 2) / (c dt)^2 = sin^2(kz dz / 2) / dz^2
+    #   + (sin^2(kx dx / 2)/dx^2 + sin^2(ky dy / 2)/dy^2) * (1 - (c dt / dz)^2 sin^2(kz dz / 2))
+    kz_dz = np.linspace(1e-4, np.pi, 500)
+    kz = kz_dz / dz
+
+    def tete_omega(kz_arr, kx_val, ky_val, dt_val):
+        cdt = c_light * dt_val
+        s_z = np.sin(0.5 * kz_arr * dz) / dz
+        s_perp2 = (np.sin(0.5 * kx_val * dx) / dx) ** 2 + (np.sin(0.5 * ky_val * dy) / dy) ** 2
+        rhs = s_z**2 + s_perp2 * (1.0 - (cdt / dz) ** 2 * np.sin(0.5 * kz_arr * dz) ** 2)
+        return (2.0 / dt_val) * np.arcsin(np.clip(cdt * np.sqrt(rhs), 0.0, 1.0))
+
+    # (1) Axial mode (kx = ky = 0) in scheme='tete' at magic step dt = dz / c
+    omega_tete_0 = tete_omega(kz, 0.0, 0.0, solver_tete.dt)
+    vph_tete_0 = omega_tete_0 / (c_light * kz)
+
+    # (2) Non-zero transverse mode (kx = kz tan(theta), ky = 0) in scheme='tete' at dt = dz / c
+    # At kz -> 0, v_ph / c -> 1; at kz dz = pi, the factor (1 - (c dt / dz)^2 sin^2(kz dz / 2)) = 0
+    # so omega dt = pi and v_ph / c = cos(theta) exactly.
+    tan_theta = 0.42
+    kx_obl = kz * tan_theta
+    omega_tete_perp = tete_omega(kz, kx_obl, 0.0, solver_tete.dt)
+    k_mag = np.hypot(kz, kx_obl)
+    vph_tete_perp = omega_tete_perp / (c_light * k_mag)
+
+    # (3) Standard 3D Yee axial mode (kx = ky = 0): omega dt = 2 arcsin((c dt / dz) sin(kz dz / 2)) (line 2498)
+    omega_yee_0 = (2.0 / solver_yee.dt) * np.arcsin(s_yee * np.sin(0.5 * kz_dz))
+    vph_yee_0 = omega_yee_0 / (c_light * kz)
+
+    # Mathematical assertions for the three curves
+    assert np.allclose(vph_tete_0, 1.0, atol=1e-14)
+    assert np.all(vph_yee_0 < 1.0) and np.all(np.diff(vph_yee_0) < 0.0)
+    assert np.isclose(vph_tete_perp[0], 1.0, atol=1e-6)
+    assert np.isclose(vph_tete_perp[-1], 1.0 / np.hypot(1.0, tan_theta), atol=1e-12)
+    assert np.all(vph_tete_perp <= 1.0 + 1e-12) and np.all(np.diff(vph_tete_perp) < 0.0)
+
+    fig = plt.figure(figsize=(W, H))
+    fig.add_artist(plt.Line2D([0.555, 0.555], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.5))
+
+    # ---- LEFT PANEL (55% width): Longitudinal phase velocity v_ph(k_z) / c ---
+    fig.text(0.285, 0.93, r"Longitudinal phase velocity $v_{\mathrm{ph}}(k_z)\, /\, c$", ha="center", fontsize=17, weight="bold")
+    ax1 = fig.add_axes([0.075, 0.14, 0.45, 0.72])
+    clean_axes(ax1)
+
+    # Shade Cherenkov gap between Yee curve and v = c
+    ax1.fill_between(kz_dz, vph_yee_0, 1.0, color=LRED, alpha=0.65, zorder=1)
+    ax1.plot(kz_dz, vph_tete_0, color=BLUE, lw=3.0, zorder=4)
+    ax1.plot(kz_dz, vph_tete_perp, color=GREEN, lw=2.4, ls="--", zorder=3)
+    ax1.plot(kz_dz, vph_yee_0, color=RED, lw=2.8, zorder=4)
+
+    # Curve annotations
+    ax1.text(
+        0.06,
+        1.012,
+        "scheme='tete' at Δt = Δz/c (k_x = k_y = 0):\nv_ph(k_z) = c exact (matches bunch v = c)",
+        color=BLUE,
+        fontsize=12.0,
+        weight="bold",
+        va="bottom",
+    )
+    ax1.text(
+        3.08,
+        0.965,
+        "k_x, k_y ≠ 0: (1 − (cΔt/Δz)² sin²(k_zΔz/2))",
+        color=GREEN,
+        fontsize=11.5,
+        ha="right",
+        va="bottom",
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=GREEN, lw=1.0, alpha=0.92),
+        zorder=5,
+    )
+    ax1.text(
+        1.95,
+        0.875,
+        "v_ph(k_z) < c: numerical Cherenkov radiation\n(1.2–660 V/pC in smooth PEC pipe\nvs ≤ 3×10⁻⁸ V/pC for tete)",
+        color=RED,
+        fontsize=11.5,
+        ha="center",
+        va="center",
+        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=RED, lw=1.2, alpha=0.95),
+        zorder=5,
+    )
+    ax1.text(
+        2.15,
+        0.765,
+        "scheme='yee'\n(cΔt ≤ 1/√(Δx⁻² + Δy⁻² + Δz⁻²) < Δz)",
+        color=RED,
+        fontsize=11.5,
+        weight="bold",
+        ha="right",
+        va="center",
+    )
+
+    ax1.set_xlim(0.0, np.pi)
+    ax1.set_ylim(0.70, 1.068)
+    ax1.set_xticks([0.0, np.pi])
+    ax1.set_xticklabels(["0", "π"], fontsize=14)
+    ax1.set_yticks([1.0])
+    ax1.set_yticklabels(["1"], fontsize=14)
+    ax1.set_xlabel(r"longitudinal wavenumber $k_z \Delta z$", fontsize=14)
+    ax1.set_ylabel(r"normalized phase velocity $v_{\mathrm{ph}}(k_z)\, /\, c$", fontsize=14)
+
+    # ---- RIGHT PANEL (45% width): TE/TM splitting & magic-step condition ----
+    fig.text(0.775, 0.93, "TE/TM splitting & magic-step condition", ha="center", fontsize=17, weight="bold")
+    ax2 = fig.add_axes([0.57, 0.05, 0.41, 0.84])
+    bare(ax2)
+
+    # Top half: horizontal time axis with integer (TM) and half-integer (TE) boxes
+    y_axis = 2.05
+    ax2.annotate(
+        "",
+        xy=(4.35, y_axis),
+        xytext=(-0.25, y_axis),
+        arrowprops=dict(arrowstyle="-|>", color=GREY, lw=1.8, mutation_scale=18),
+    )
+    ax2.text(4.42, y_axis, r"$t$", fontsize=15, color=GREY, va="center")
+
+    t_nodes = [
+        (0.45, "n Δt", "TM"),
+        (2.05, "(n+1/2) Δt", "TE"),
+        (3.65, "(n+1) Δt", "TM"),
+    ]
+    for tx, tlab, kind in t_nodes:
+        ax2.plot([tx, tx], [y_axis - 0.08, y_axis + 0.08], color=GREY, lw=1.8)
+        ax2.text(tx, y_axis - 0.24, tlab, ha="center", va="top", fontsize=13.5, color=GREY, weight="bold")
+        if kind == "TM":
+            box(
+                ax2,
+                (tx, y_axis + 0.56),
+                1.36,
+                0.52,
+                "longitudinal-TM:\n(H_x, H_y, E_z)",
+                LBLUE,
+                BLUE,
+                fs=12.0,
+                tc=BLUE,
+            )
+        else:
+            box(
+                ax2,
+                (tx, y_axis + 1.24),
+                1.42,
+                0.52,
+                "longitudinal-TE:\n(E_x, E_y, H_z)",
+                LORANGE,
+                ORANGE,
+                fs=12.0,
+                tc=ORANGE,
+            )
+
+    # Curved leapfrog / Stormer-Verlet arrows linking TM and TE boxes
+    arrow(ax2, (0.95, y_axis + 0.85), (1.42, y_axis + 1.22), color=ORANGE, lw=2.2, rad=-0.25, ms=16)
+    arrow(ax2, (2.68, y_axis + 1.22), (3.15, y_axis + 0.85), color=BLUE, lw=2.2, rad=-0.25, ms=16)
+    ax2.text(
+        2.05,
+        y_axis + 1.72,
+        "Störmer–Verlet half-kick / kick / half-kick",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LGREY, ec=GREY, lw=1.1),
+    )
+
+    # Dispersion relation card in middle-right
+    box(
+        ax2,
+        (2.05, 1.12),
+        4.35,
+        0.72,
+        r"$\frac{\sin^2(\omega\Delta t/2)}{(c\Delta t)^2} = \frac{\sin^2(k_z\Delta z/2)}{\Delta z^2}"
+        r" + \left(\frac{\sin^2(k_x\Delta x/2)}{\Delta x^2} + \frac{\sin^2(k_y\Delta y/2)}{\Delta y^2}\right)"
+        r"\!\left(1 - \frac{(c\Delta t)^2}{\Delta z^2}\sin^2(k_z\Delta z/2)\right)$",
+        "white",
+        GREY,
+        fs=11.0,
+        tc="black",
+    )
+
+    # Bottom half: stability and magic-step box
+    box(
+        ax2,
+        (1.02, 0.30),
+        1.95,
+        0.50,
+        "Stability limits:\ncΔt ≤ Δz\ncΔt ≤ (Δx⁻² + Δy⁻²)⁻¹/²",
+        LGREY,
+        GREY,
+        fs=12.0,
+        tc="black",
+    )
+    box(
+        ax2,
+        (3.15, 0.30),
+        2.05,
+        0.50,
+        f"SolverFIT3D(scheme='tete'):\nc * dt / dz = {s_tete:.6f}",
+        LBLUE,
+        BLUE,
+        fs=12.0,
+        tc=BLUE,
+    )
+    box(
+        ax2,
+        (2.05, -0.38),
+        4.35,
+        0.50,
+        "magic timestep Δt = Δz / c when Δz ≤ (Δx⁻² + Δy⁻²)⁻¹/²",
+        LGREEN,
+        GREEN,
+        fs=13.0,
+        tc="black",
+    )
+
+    ax2.set_xlim(-0.35, 4.55)
+    ax2.set_ylim(-0.78, 4.05)
+
+    fig.savefig(out_dir / "fig14_2_tete_dispersion.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     out_root = Path(sys.argv[1])
     out_root.mkdir(parents=True, exist_ok=True)
     fig13_4_subpixel_smoothed_projection(out_root)
+    fig14_2_tete_dispersion(out_root)
