@@ -30,9 +30,17 @@ from matplotlib.patches import (
 )  # noqa: E402
 from scipy.constants import c as C0  # noqa: E402
 from scipy.spatial import Delaunay  # noqa: E402
+import scipy.sparse as sp  # noqa: E402
 
 from wakis.bloch import incidence_angle, k_parallel  # noqa: E402
 from wakis.resonances import harminv  # noqa: E402
+from wakis.subgrid import (
+    Circle as SubgridCircle,
+    Geometry,
+    QuadMesh,
+    SubgridFIT2D,
+    refine_near,
+)  # noqa: E402
 from wakis.unstructured import (  # noqa: E402
     PolygonFIT2D,
     SimplexMesh,
@@ -40,6 +48,7 @@ from wakis.unstructured import (  # noqa: E402
     hybrid_circles_mesh,
     voronoi_disk_mesh,
 )
+from wakis.unstructured.subtri import SubTriFIT2D, subtri_circles_mesh  # noqa: E402
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
 ORANGE, LORANGE = "#e8873a", "#fbe0c8"
@@ -1053,9 +1062,423 @@ def fig11_1_triangle_and_polygon_fit(outroot):
     plt.close(fig)
 
 
+# -------------------------------------------------------------------------- 11.2
+def fig11_2_subgrid_and_subtri(outroot):
+    """Draw Figure 11.2: 2:1 Cartesian subgridding and hybrid quadtree + triangles."""
+    out = outroot / "section11"
+    out.mkdir(parents=True, exist_ok=True)
+
+    fig = plt.figure(figsize=(W, H))
+
+    # ---- LEFT PANEL: Symmetric hanging-node prolongation P / P^T
+    ax1 = fig.add_axes([0.015, 0.24, 0.30, 0.63])
+    bare(ax1)
+
+    # Verify exact 2:1 interface prolongation P on a 2-cell coarse / fine QuadMesh
+    qmesh_demo = QuadMesh(
+        [0.0, 1.0, 2.0],
+        [0.0, 1.0],
+        ratio=2,
+        max_level=1,
+        refine=lambda lev, x0, x1, y0, y1: x0 >= 0.5,
+    )
+    assert int(qmesh_demo.hanging.sum()) == 1
+    assert np.allclose(np.asarray(qmesh_demo.P.sum(axis=1)).ravel(), 1.0, rtol=1e-12)
+    h_row = qmesh_demo.P[np.flatnonzero(qmesh_demo.hanging)[0]]
+    assert np.allclose(np.sort(h_row.data), [0.5, 0.5], rtol=1e-12)
+
+    # Draw 1 coarse square cell on left [-1.2, 0] x [0, 1.2] and 2 fine square cells on right [0, 0.6] x [0, 1.2]
+    Hc = 1.30
+    hf = Hc / 2.0
+    ax1.add_patch(Rectangle((-Hc, 0.0), Hc, Hc, fc=LBLUE, ec=BLUE, lw=2.4, zorder=1))
+    ax1.add_patch(Rectangle((0.0, 0.0), hf, hf, fc="white", ec=BLUE, lw=2.2, zorder=1))
+    ax1.add_patch(Rectangle((0.0, hf), hf, hf, fc="white", ec=BLUE, lw=2.2, zorder=1))
+
+    # Master nodes (blue circles)
+    master_pts = [
+        (-Hc, 0.0),
+        (-Hc, Hc),
+        (0.0, 0.0),
+        (0.0, Hc),
+        (hf, 0.0),
+        (hf, hf),
+        (hf, Hc),
+    ]
+    for mx, my in master_pts:
+        ax1.plot(mx, my, "o", color=BLUE, ms=9.5, mec="white", mew=1.3, zorder=5)
+    ax1.text(
+        0.0,
+        Hc + 0.12,
+        r"$u$",
+        ha="center",
+        va="bottom",
+        fontsize=15,
+        color=BLUE,
+        weight="bold",
+    )
+    ax1.text(
+        0.0,
+        -0.12,
+        r"$u$",
+        ha="center",
+        va="top",
+        fontsize=15,
+        color=BLUE,
+        weight="bold",
+    )
+    ax1.text(
+        -Hc,
+        Hc + 0.12,
+        r"$u$",
+        ha="center",
+        va="bottom",
+        fontsize=15,
+        color=BLUE,
+        weight="bold",
+    )
+
+    # Hanging node at midpoint (0, hf) (orange diamond)
+    ax1.plot(0.0, hf, "D", color=ORANGE, ms=11.0, mec="white", mew=1.4, zorder=6)
+    ax1.text(
+        0.10,
+        hf,
+        "hanging node",
+        ha="left",
+        va="center",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.88),
+        zorder=7,
+    )
+
+    # Blue arrows from coarse master nodes to hanging node: linear prolongation u_all = P u
+    arrow(
+        ax1,
+        (-0.06, 0.08),
+        (-0.06, hf - 0.08),
+        color=BLUE,
+        lw=2.4,
+        rad=-0.35,
+        ms=17,
+        z=6,
+    )
+    arrow(
+        ax1,
+        (-0.06, Hc - 0.08),
+        (-0.06, hf + 0.08),
+        color=BLUE,
+        lw=2.4,
+        rad=0.35,
+        ms=17,
+        z=6,
+    )
+    ax1.text(
+        -0.65,
+        hf + 0.22,
+        "linear prolongation:\n" + r"$u_{\mathrm{all}} = P\,u$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc="white", ec=BLUE, lw=1.1),
+        zorder=7,
+    )
+
+    # Orange reverse arrows from hanging node to master nodes: fine-to-coarse restriction P^T
+    arrow(
+        ax1,
+        (0.06, hf - 0.08),
+        (0.06, 0.08),
+        color=ORANGE,
+        lw=2.4,
+        rad=-0.35,
+        ms=17,
+        z=6,
+    )
+    arrow(
+        ax1,
+        (0.06, hf + 0.08),
+        (0.06, Hc - 0.08),
+        color=ORANGE,
+        lw=2.4,
+        rad=0.35,
+        ms=17,
+        z=6,
+    )
+    ax1.text(
+        -0.20,
+        -0.34,
+        r"fine-to-coarse restriction: $P^{T}$ (exact transpose)",
+        ha="center",
+        va="top",
+        fontsize=11.5,
+        color=ORANGE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LORANGE, ec=ORANGE, lw=1.1),
+        clip_on=False,
+        zorder=7,
+    )
+
+    ax1.set_xlim(-1.45, 1.05)
+    ax1.set_ylim(-0.62, 1.62)
+    ax1.set_title(
+        "Symmetric hanging-node\nprolongation $P$ / $P^{T}$",
+        fontsize=13.5,
+        weight="bold",
+        pad=8,
+    )
+
+    # Update equations below Left Panel (user_manual.md line 2023)
+    fig.text(
+        0.165,
+        0.145,
+        r"$f^{n+1/2} = f^{n-1/2} - \Delta t\,(G P)\,u^n$"
+        "\n"
+        r"$D\,(u^{n+1} - u^n) = \Delta t\,(G P)^{T} W\,f^{n+1/2}$",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color="black",
+        bbox=dict(boxstyle="round,pad=0.28", fc=LBLUE, ec=BLUE, lw=1.2),
+    )
+    fig.text(
+        0.165,
+        0.045,
+        r"energy drift $\leq 4\times 10^{-15}$ over $10^5$ steps",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.25", fc=LGREEN, ec=GREEN, lw=1.2),
+    )
+
+    # ---- CENTRE PANEL: SubgridFIT2D (QuadMesh, ratio=2, max_level=2)
+    ax2 = fig.add_axes([0.35, 0.20, 0.30, 0.67])
+    bare(ax2)
+
+    # Build real 2-level 2:1 QuadMesh refined near r = 1.0e-6 (user_manual.md lines 2031-2038)
+    a_rad = 1.0e-6
+    x_sg = np.linspace(-1.8e-6, 1.8e-6, 19)
+    rim_fn = lambda d: lambda xm, ym, hd: np.abs(np.hypot(xm, ym) - a_rad) < d
+    qmesh = QuadMesh(
+        x_sg,
+        x_sg,
+        ratio=2,
+        max_level=2,
+        refine=refine_near([rim_fn(0.26e-6), rim_fn(0.12e-6)]),
+    )
+    geo_sg = Geometry([SubgridCircle((0.0, 0.0), a_rad, 4.0)])
+    sg_solver = SubgridFIT2D(qmesh, geo_sg, polarization="TE")
+
+    # Assert P rows sum to 1 and (G P)^T W (G P) is symmetric
+    assert np.allclose(np.asarray(qmesh.P.sum(axis=1)).ravel(), 1.0, rtol=1e-12)
+    GP = sg_solver.K
+    K_sg = GP.T @ sp.diags(sg_solver.W) @ GP
+    assert np.allclose((K_sg - K_sg.T).data, 0.0, atol=1e-12)
+
+    c_sg = qmesh.cells
+    x0s, x1s, y0s, y1s = (
+        c_sg["x0"] * 1e6,
+        c_sg["x1"] * 1e6,
+        c_sg["y0"] * 1e6,
+        c_sg["y1"] * 1e6,
+    )
+    for i_c in range(qmesh.n_cells):
+        if x1s[i_c] <= 0.0 or y1s[i_c] <= 0.0:
+            continue
+        r_min = np.hypot(max(x0s[i_c], 0.0), max(y0s[i_c], 0.0))
+        r_max = np.hypot(x1s[i_c], y1s[i_c])
+        cut = (r_min < 1.0 - 1e-6) and (r_max > 1.0 + 1e-6)
+        inside = r_max <= 1.0 + 1e-6
+        fc_c = LGREEN if cut else (LBLUE if inside else "white")
+        ec_c = GREEN if cut else BLUE
+        lw_c = 1.8 if cut else 1.2
+        z_c = 3 if cut else 2
+        ax2.add_patch(
+            Rectangle(
+                (x0s[i_c], y0s[i_c]),
+                x1s[i_c] - x0s[i_c],
+                y1s[i_c] - y0s[i_c],
+                fc=fc_c,
+                ec=ec_c,
+                lw=lw_c,
+                zorder=z_c,
+            )
+        )
+
+    th_q = np.linspace(0.0, 0.5 * np.pi, 200)
+    ax2.plot(1.0 * np.cos(th_q), 1.0 * np.sin(th_q), color=GREY, lw=3.0, zorder=5)
+    ax2.text(
+        0.38,
+        0.38,
+        r"$r = 1.0\times 10^{-6}$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=GREY, lw=1.0),
+        zorder=6,
+    )
+    ax2.text(
+        0.82,
+        1.48,
+        "subpixel material averaging\non cut leaf cells",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LGREEN, ec=GREEN, lw=1.2),
+        zorder=7,
+    )
+
+    ax2.set_xlim(0.0, 1.65)
+    ax2.set_ylim(0.0, 1.65)
+    ax2.set_title(
+        "SubgridFIT2D\n(QuadMesh, ratio=2, max_level=2)",
+        fontsize=13.5,
+        weight="bold",
+        pad=8,
+    )
+    fig.text(
+        0.50,
+        0.06,
+        "B1: 2.3–2.4× less work;\nB2 curved metal in TE: drops to 1st order",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.26", fc=LORANGE, ec=ORANGE, lw=1.2),
+    )
+
+    # ---- RIGHT PANEL: SubTriFIT2D (subtri_circles_mesh)
+    ax3 = fig.add_axes([0.68, 0.20, 0.30, 0.67])
+    bare(ax3)
+
+    # Build real subtri_circles_mesh around r = 1.0e-6 (user_manual.md lines 2061, 2075-2085)
+    st_mesh, st_P, st_info = subtri_circles_mesh(
+        [(0.0, 0.0, 1.0e-6)], h=0.09e-6, levels=2, half_width=1.8e-6, pml_cells=0
+    )
+    st_solver = SubTriFIT2D(st_mesh, st_P, materials={0: [4.0, 1.0]}, polarization="TE")
+
+    assert (
+        st_info["n_triangles"] > 0
+        and sum(st_info["n_squares"]) > 0
+        and st_info["n_hanging"] > 0
+    )
+    assert np.allclose(np.asarray(st_P.sum(axis=1)).ravel(), 1.0, rtol=1e-12)
+    K_st = st_solver.G.T @ sp.diags(st_solver.stiff) @ st_solver.G
+    assert np.allclose((K_st - K_st.T).data, 0.0, atol=1e-12)
+    assert np.all(st_solver.mass > 0)
+
+    st_nodes_um = st_mesh.nodes * 1e6
+    for ci in range(st_mesh.n_cells):
+        c_idx = st_mesh.cell(ci)
+        poly_xy = st_nodes_um[c_idx]
+        cen = poly_xy.mean(axis=0)
+        if cen[0] < -0.10 or cen[1] < -0.10:
+            continue
+        is_tri = len(c_idx) == 3
+        inside = st_mesh.cell_tags[ci] == 0
+        if is_tri:
+            fc_st = LBLUE if inside else "#eef5fc"
+            ec_st, lw_st, z_st = BLUE, 1.45, 3
+        else:
+            fc_st = LBLUE if inside else "white"
+            ec_st, lw_st, z_st = BLUE, 1.25, 2
+        ax3.add_patch(
+            Polygon(poly_xy, closed=True, fc=fc_st, ec=ec_st, lw=lw_st, zorder=z_st)
+        )
+
+    # Plot hanging nodes from st_P (orange diamonds)
+    hanging_mask = np.asarray(abs(st_P).sum(axis=0)).ravel() == 0
+    h_pts = st_nodes_um[hanging_mask]
+    in_view = (
+        (h_pts[:, 0] >= 0.0)
+        & (h_pts[:, 0] <= 1.65)
+        & (h_pts[:, 1] >= 0.0)
+        & (h_pts[:, 1] <= 1.65)
+    )
+    ax3.plot(
+        h_pts[in_view, 0],
+        h_pts[in_view, 1],
+        "D",
+        color=ORANGE,
+        ms=5.2,
+        mec="white",
+        mew=0.6,
+        zorder=6,
+    )
+
+    ax3.plot(1.0 * np.cos(th_q), 1.0 * np.sin(th_q), color=GREY, lw=3.0, zorder=5)
+    ax3.text(
+        0.82,
+        1.48,
+        r"$K = G P,\quad D = P^{T} m$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LORANGE, ec=ORANGE, lw=1.2),
+        zorder=7,
+    )
+    ax3.text(
+        0.34,
+        0.24,
+        r"finest squares ($h$)",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec=BLUE, lw=0.9, alpha=0.9),
+        zorder=7,
+    )
+    ax3.text(
+        1.26,
+        1.18,
+        r"coarse ($2^L h$)",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec=BLUE, lw=0.9, alpha=0.9),
+        zorder=7,
+    )
+
+    ax3.set_xlim(0.0, 1.65)
+    ax3.set_ylim(0.0, 1.65)
+    ax3.set_title(
+        "SubTriFIT2D\n(subtri_circles_mesh)", fontsize=13.5, weight="bold", pad=8
+    )
+    fig.text(
+        0.83,
+        0.06,
+        "body-fitted collar + quadtree bulk:\n"
+        + r"5–7× less work on B1, drift $\leq 2\times 10^{-15}$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.26", fc=LGREEN, ec=GREEN, lw=1.2),
+    )
+
+    fig.savefig(out / "fig11_2_subgrid_and_subtri.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
     fig9_1_bloch_periodic(outroot)
     fig10_5_harminv_resonance(outroot)
     fig11_1_triangle_and_polygon_fit(outroot)
+    fig11_2_subgrid_and_subtri(outroot)
