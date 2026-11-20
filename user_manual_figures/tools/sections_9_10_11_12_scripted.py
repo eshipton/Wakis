@@ -29,9 +29,17 @@ from matplotlib.patches import (
     Rectangle,
 )  # noqa: E402
 from scipy.constants import c as C0  # noqa: E402
+from scipy.spatial import Delaunay  # noqa: E402
 
 from wakis.bloch import incidence_angle, k_parallel  # noqa: E402
 from wakis.resonances import harminv  # noqa: E402
+from wakis.unstructured import (  # noqa: E402
+    PolygonFIT2D,
+    SimplexMesh,
+    UnstructuredFIT2D,
+    hybrid_circles_mesh,
+    voronoi_disk_mesh,
+)
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
 ORANGE, LORANGE = "#e8873a", "#fbe0c8"
@@ -681,8 +689,373 @@ def fig10_5_harminv_resonance(outroot):
     plt.close(fig)
 
 
+# -------------------------------------------------------------------------- 11.1
+def _circumcentre(a, b, c):
+    """Exact circumcentre of 2D triangle (a, b, c)."""
+    a, b, c = map(np.asarray, (a, b, c))
+    d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]))
+    ux = (
+        (a @ a) * (b[1] - c[1]) + (b @ b) * (c[1] - a[1]) + (c @ c) * (a[1] - b[1])
+    ) / d
+    uy = (
+        (a @ a) * (c[0] - b[0]) + (b @ b) * (a[0] - c[0]) + (c @ c) * (b[0] - a[0])
+    ) / d
+    return np.array([ux, uy])
+
+
+def _shoelace_area(poly):
+    """Signed area of a 2D polygon given its ordered vertices."""
+    p = np.asarray(poly)
+    return 0.5 * float(
+        np.sum(p[:, 0] * np.roll(p[:, 1], -1) - np.roll(p[:, 0], -1) * p[:, 1])
+    )
+
+
+def fig11_1_triangle_and_polygon_fit(outroot):
+    """Draw Figure 11.1: 2D unstructured and polygonal FIT discretizations."""
+    out = outroot / "section11"
+    out.mkdir(parents=True, exist_ok=True)
+
+    fig = plt.figure(figsize=(W, H))
+    panel_w, panel_h = 0.225, 0.62
+    y_bot = 0.22
+    xs_left = [0.02 + k * 0.245 for k in range(4)]
+
+    # ---- PANEL 1: UnstructuredFIT2D: hodge="voronoi"
+    ax1 = fig.add_axes([xs_left[0], y_bot, panel_w, panel_h])
+    bare(ax1)
+    th6 = np.linspace(0, 2 * np.pi, 7)[:-1]
+    pts1 = np.vstack(
+        [
+            [[0.0, 0.0]],
+            1.0 * np.column_stack([np.cos(th6), np.sin(th6)]),
+            1.78 * np.column_stack([np.cos(th6 + np.pi / 6), np.sin(th6 + np.pi / 6)]),
+            1.92 * np.column_stack([np.cos(th6), np.sin(th6)]),
+        ]
+    )
+    tri1 = Delaunay(pts1).simplices
+    # Orient counter-clockwise
+    for idx_t, t in enumerate(tri1):
+        if _shoelace_area(pts1[t]) < 0:
+            tri1[idx_t] = t[[0, 2, 1]]
+    ccs1 = np.array([_circumcentre(*pts1[t]) for t in tri1])
+
+    # Assert every triangle is strictly acute and every interior Voronoi dual edge is orthogonal to its primal edge
+    edge_to_tris = {}
+    for ti, t in enumerate(tri1):
+        a, b, c = pts1[t]
+        la2, lb2, lc2 = np.sum((b - c) ** 2), np.sum((a - c) ** 2), np.sum((a - b) ** 2)
+        assert la2 + lb2 > lc2 and lb2 + lc2 > la2 and lc2 + la2 > lb2
+        for u, v in ((t[0], t[1]), (t[1], t[2]), (t[2], t[0])):
+            edge_to_tris.setdefault((min(u, v), max(u, v)), []).append(ti)
+
+    for (u, v), tlist in edge_to_tris.items():
+        if len(tlist) == 2:
+            e_vec = pts1[v] - pts1[u]
+            d_vec = ccs1[tlist[1]] - ccs1[tlist[0]]
+            assert (
+                abs(np.dot(e_vec, d_vec))
+                / (np.linalg.norm(e_vec) * np.linalg.norm(d_vec))
+                < 1e-12
+            )
+
+    # Shade central Voronoi dual polygon around node 0
+    inc1 = [ti for ti, t in enumerate(tri1) if 0 in t]
+    ang1 = np.arctan2(ccs1[inc1, 1], ccs1[inc1, 0])
+    vor_poly0 = ccs1[np.array(inc1)[np.argsort(ang1)]]
+    smesh1 = SimplexMesh(pts1, tri1)
+    usolver1 = UnstructuredFIT2D(smesh1, polarization="TM", hodge="voronoi")
+    assert np.isclose(
+        _shoelace_area(vor_poly0),
+        float(np.asarray(usolver1._Pn.sum(axis=1)).ravel()[0]),
+        rtol=1e-12,
+    )
+
+    ax1.add_patch(
+        Polygon(vor_poly0, closed=True, fc=LORANGE, ec="none", alpha=0.85, zorder=1)
+    )
+    for u, v in edge_to_tris:
+        ax1.plot(pts1[[u, v], 0], pts1[[u, v], 1], color=BLUE, lw=1.9, zorder=3)
+    for (u, v), tlist in edge_to_tris.items():
+        if len(tlist) == 2:
+            c_a, c_b = ccs1[tlist[0]], ccs1[tlist[1]]
+            ax1.plot(
+                [c_a[0], c_b[0]],
+                [c_a[1], c_b[1]],
+                color=ORANGE,
+                ls="--",
+                lw=1.8,
+                zorder=4,
+            )
+    ax1.plot(ccs1[:, 0], ccs1[:, 1], "o", color=ORANGE, ms=5.5, zorder=5)
+    ax1.plot(pts1[0, 0], pts1[0, 1], "o", color=BLUE, ms=7.0, zorder=6)
+
+    # Right-angle mark between primary edge (0 -> 1) and its dual edge
+    p_mid = 0.5 * (pts1[0] + pts1[1])
+    t_hat = (pts1[1] - pts1[0]) / np.linalg.norm(pts1[1] - pts1[0])
+    n_hat = np.array([-t_hat[1], t_hat[0]])
+    s_ra = 0.12
+    ra_pts = np.array(
+        [p_mid + s_ra * t_hat, p_mid + s_ra * (t_hat + n_hat), p_mid + s_ra * n_hat]
+    )
+    ax1.plot(ra_pts[:, 0], ra_pts[:, 1], color=GREY, lw=1.5, zorder=6)
+
+    ax1.set_xlim(-2.05, 2.05)
+    ax1.set_ylim(-2.05, 2.05)
+    ax1.set_title(
+        'UnstructuredFIT2D:\nhodge="voronoi"', fontsize=13.5, weight="bold", pad=10
+    )
+    ax1.text(
+        0.5,
+        -0.08,
+        "orthogonal dual: diagonal Hodge,\ndiv curl = 0",
+        transform=ax1.transAxes,
+        ha="center",
+        va="top",
+        fontsize=11.0,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.25", fc=LBLUE, ec=BLUE, lw=1.2),
+    )
+
+    # ---- PANEL 2: UnstructuredFIT2D: hodge="barycentric"
+    ax2 = fig.add_axes([xs_left[1], y_bot, panel_w, panel_h])
+    bare(ax2)
+    # Interior vertex at (0, 0) surrounded by 5 outer vertices; top triangle (0, 1, 2) is obtuse at node 0 (> 115 deg)
+    ang2 = np.deg2rad([22.0, 158.0, 215.0, 270.0, 325.0])
+    rad2 = np.array([1.72, 1.72, 1.55, 1.50, 1.55])
+    pts2 = np.vstack(
+        [[[0.0, 0.0]], np.column_stack([rad2 * np.cos(ang2), rad2 * np.sin(ang2)])]
+    )
+    tri2 = np.array([[0, 1, 2], [0, 2, 3], [0, 3, 4], [0, 4, 5], [0, 5, 1]], dtype=int)
+
+    # Assert triangle 0 is obtuse (> 90 deg at vertex 0), yet barycentric dual area equals 1/3 sum(|T|) > 0
+    v1_vec, v2_vec = pts2[1] - pts2[0], pts2[2] - pts2[0]
+    obtuse_angle_deg = np.rad2deg(
+        np.arccos(
+            np.dot(v1_vec, v2_vec) / (np.linalg.norm(v1_vec) * np.linalg.norm(v2_vec))
+        )
+    )
+    assert obtuse_angle_deg > 110.0
+
+    bary_loop = []
+    tri_areas2 = []
+    for k in range(len(tri2)):
+        t = tri2[k]
+        tri_areas2.append(_shoelace_area(pts2[t]))
+        m_edge = 0.5 * (pts2[0] + pts2[t[1]])
+        c_tri = pts2[t].mean(axis=0)
+        bary_loop.extend([m_edge, c_tri])
+    bary_loop = np.array(bary_loop)
+    bary_area0 = _shoelace_area(bary_loop)
+    smesh2 = SimplexMesh(pts2, tri2)
+    usolver2 = UnstructuredFIT2D(
+        smesh2, polarization="TM", bc="pmc", hodge="barycentric"
+    )
+    assert bary_area0 > 0.0
+    assert np.isclose(bary_area0, np.sum(tri_areas2) / 3.0, rtol=1e-12)
+    assert np.isclose(
+        bary_area0, float(np.asarray(usolver2._Pn.sum(axis=1)).ravel()[0]), rtol=1e-12
+    )
+
+    # Highlight the obtuse triangle in light red/blue and the barycentric dual cell in light orange
+    ax2.add_patch(
+        Polygon(pts2[tri2[0]], closed=True, fc=LRED, ec="none", alpha=0.45, zorder=1)
+    )
+    ax2.add_patch(
+        Polygon(
+            bary_loop, closed=True, fc=LORANGE, ec=ORANGE, ls="--", lw=2.0, zorder=2
+        )
+    )
+    for t in tri2:
+        p_t = pts2[t]
+        ax2.plot(
+            [p_t[0, 0], p_t[1, 0], p_t[2, 0], p_t[0, 0]],
+            [p_t[0, 1], p_t[1, 1], p_t[2, 1], p_t[0, 1]],
+            color=BLUE,
+            lw=2.0,
+            zorder=3,
+        )
+    centroids2 = np.array([pts2[t].mean(axis=0) for t in tri2])
+    midpoints2 = np.array([0.5 * (pts2[0] + pts2[t[1]]) for t in tri2])
+    ax2.plot(centroids2[:, 0], centroids2[:, 1], "o", color=ORANGE, ms=6.5, zorder=5)
+    ax2.plot(midpoints2[:, 0], midpoints2[:, 1], "s", color=BLUE, ms=4.5, zorder=5)
+    ax2.plot(0.0, 0.0, "o", color=BLUE, ms=7.0, zorder=6)
+    ax2.text(
+        0.0,
+        1.15,
+        "obtuse triangle",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=RED,
+        weight="bold",
+        zorder=6,
+    )
+
+    ax2.set_xlim(-2.05, 2.05)
+    ax2.set_ylim(-2.05, 2.05)
+    ax2.set_title(
+        'UnstructuredFIT2D:\nhodge="barycentric"', fontsize=13.5, weight="bold", pad=10
+    )
+    ax2.text(
+        0.5,
+        -0.08,
+        "positive dual area on\nobtuse triangles",
+        transform=ax2.transAxes,
+        ha="center",
+        va="top",
+        fontsize=11.0,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.25", fc=LORANGE, ec=ORANGE, lw=1.2),
+    )
+
+    # ---- PANEL 3: PolygonFIT2D: voronoi_disk_mesh
+    ax3 = fig.add_axes([xs_left[2], y_bot, panel_w, panel_h])
+    bare(ax3)
+    vmesh = voronoi_disk_mesh([1.0e-6], 0.22e-6, merge_tol=1e-11, lloyd=10)
+    assert np.max(vmesh.orthogonality_defect) < 1e-6
+    vsolver = PolygonFIT2D(
+        vmesh, materials={0: [4.0, 1.0]}, polarization="TM", hodge="orthogonal"
+    )
+    assert np.all(vsolver.mass > 0) and np.all(vsolver.stiff >= 0)
+
+    scale_v = 1.85 / 1.0e-6
+    vnodes = vmesh.nodes * scale_v
+    vdual = vmesh.dual_point * scale_v
+    for ci in range(vmesh.n_cells):
+        c_idx = vmesh.cell(ci)
+        fc_cell = LBLUE if np.hypot(*vdual[ci]) < 1.05 else "white"
+        ax3.add_patch(
+            Polygon(vnodes[c_idx], closed=True, fc=fc_cell, ec=BLUE, lw=1.7, zorder=2)
+        )
+
+    # Plot orthogonal Delaunay dual edges between neighbouring generators
+    edge_cells_v = {}
+    for cc, ce in zip(vmesh.corner_cell, vmesh.corner_edge):
+        edge_cells_v.setdefault(int(ce), []).append(int(cc))
+    for cells_pair in edge_cells_v.values():
+        if len(cells_pair) == 2:
+            g0, g1 = vdual[cells_pair[0]], vdual[cells_pair[1]]
+            ax3.plot(
+                [g0[0], g1[0]],
+                [g0[1], g1[1]],
+                color=ORANGE,
+                ls="--",
+                lw=1.2,
+                alpha=0.85,
+                zorder=3,
+            )
+    ax3.plot(vdual[:, 0], vdual[:, 1], "o", color=ORANGE, ms=3.8, zorder=4)
+
+    ax3.set_xlim(-2.05, 2.05)
+    ax3.set_ylim(-2.05, 2.05)
+    ax3.set_title(
+        "PolygonFIT2D:\nvoronoi_disk_mesh", fontsize=13.5, weight="bold", pad=10
+    )
+    ax3.text(
+        0.5,
+        -0.08,
+        'hodge="orthogonal": ½ lattice dispersion\n(1.95× fewer unknowns on B1 TM)',
+        transform=ax3.transAxes,
+        ha="center",
+        va="top",
+        fontsize=10.8,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.2),
+    )
+
+    # ---- PANEL 4: PolygonFIT2D: hybrid_circles_mesh
+    ax4 = fig.add_axes([xs_left[3], y_bot, panel_w, panel_h])
+    bare(ax4)
+    # Build real hybrid_circles_mesh around r = 1 um using exact manual parameters (lines 1993-2002)
+    h_hyb = 0.08e-6
+    hmesh, hinfo = hybrid_circles_mesh(
+        [(0.0, 0.0, 1.0e-6)],
+        h_in=h_hyb,
+        h_out=2.0 * h_hyb,
+        half_width=1.9e-6,
+        pml_cells=0,
+    )
+    assert hinfo["n_squares"] > 0 and hinfo["n_triangles"] > 0
+    assert np.max(hmesh.orthogonality_defect) < 1e-6
+    hsolver = PolygonFIT2D(
+        hmesh, materials={0: [4.0, 1.0]}, polarization="TE", hodge="auto"
+    )
+    assert np.all(hsolver.mass > 0)
+
+    # Identify transition cells that share an edge between a triangle (size 3) and a square (size 4)
+    edge_cells_h = {}
+    for cc, ce in zip(hmesh.corner_cell, hmesh.corner_edge):
+        edge_cells_h.setdefault(int(ce), []).append(int(cc))
+    trans_cells = set()
+    for cells_pair in edge_cells_h.values():
+        if len(cells_pair) == 2:
+            s0, s1 = hmesh.cell_size[cells_pair[0]], hmesh.cell_size[cells_pair[1]]
+            if s0 != s1:
+                trans_cells.update(cells_pair)
+
+    # Plot first-quadrant zoom [0, 1.85] um mapped to [-2.05, 2.05]
+    hnodes_um = hmesh.nodes * 1e6
+    for ci in range(hmesh.n_cells):
+        c_idx = hmesh.cell(ci)
+        poly_xy = hnodes_um[c_idx]
+        cen = poly_xy.mean(axis=0)
+        if cen[0] < -0.15 or cen[1] < -0.15:
+            continue
+        if ci in trans_cells:
+            fc_h, ec_h, lw_h, z_h = LGREEN, GREEN, 1.9, 3
+        elif hmesh.cell_tags[ci] == 0:
+            fc_h, ec_h, lw_h, z_h = LBLUE, BLUE, 1.5, 2
+        else:
+            fc_h, ec_h, lw_h, z_h = "white", BLUE, 1.5, 2
+        ax4.add_patch(
+            Polygon(poly_xy, closed=True, fc=fc_h, ec=ec_h, lw=lw_h, zorder=z_h)
+        )
+
+    # Exact circular interface arc r = 1 um in dark grey
+    th_arc = np.linspace(-0.08, 0.55 * np.pi, 200)
+    ax4.plot(1.0 * np.cos(th_arc), 1.0 * np.sin(th_arc), color=GREY, lw=3.2, zorder=5)
+    ax4.text(
+        0.52,
+        0.52,
+        r"$r = 1\ \mu\mathrm{m}$",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=GREY, lw=1.0),
+        zorder=6,
+    )
+
+    ax4.set_xlim(-0.05, 1.82)
+    ax4.set_ylim(-0.05, 1.82)
+    ax4.set_title(
+        "PolygonFIT2D:\nhybrid_circles_mesh", fontsize=13.5, weight="bold", pad=10
+    )
+    ax4.text(
+        0.5,
+        -0.08,
+        'hodge="auto": diagonal in bulk,\nhodge="mfd" on transition cells',
+        transform=ax4.transAxes,
+        ha="center",
+        va="top",
+        fontsize=10.8,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.2),
+    )
+
+    fig.savefig(out / "fig11_1_triangle_and_polygon_fit.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
     fig9_1_bloch_periodic(outroot)
     fig10_5_harminv_resonance(outroot)
+    fig11_1_triangle_and_polygon_fit(outroot)
