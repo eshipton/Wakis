@@ -635,6 +635,10 @@ This distinction has profound mathematical and practical consequences:
 
 ### 4.1 Integral Maxwell Equations on Dual Cell Complexes
 
+![Figure 4.1](user_manual_figures/section4/fig4_1_dual_cell_complex.png)
+
+*Figure 4.1. Primary cell and its dual. Each primary edge L_k pierces a dual face Ã_k, and each dual edge L̃_m pierces a primary face A_m. Faraday's law on one face is an exact sum of edge voltages with ±1 signs.*
+
 Consider a domain $\Omega \subset \mathbb{R}^3$ partitioned into a **primary cell complex** $G$ consisting of:
 - $N_v$ primary vertices (0-cells) $v_i$,
 - $N_e$ oriented primary edges (1-cells) $L_k$,
@@ -663,6 +667,10 @@ where $C_{mk} \in \{-1, 0, +1\}$ records whether edge $L_k$ is on the boundary $
 ---
 
 ### 4.2 Maxwell Grid Equations (Weiland 1977) and Topological Identities
+
+![Figure 4.2](user_manual_figures/section4/fig4_2_maxwell_grid_equations.png)
+
+*Figure 4.2. The Maxwell grid equations: the topological operators on the primary and dual complexes, linked only by the material matrices M_ε and M_ν. On the unfolded cube, the boundary of a boundary is empty (∂∂ = 0), which gives S C = 0.*
 
 Collecting the integral balances over all faces and volumes of $G$ and $\tilde{G}$ produces the **Maxwell Grid Equations (MGE)** ([Weiland 1977](#19-references-and-credits); [Clemens & Weiland 2001](#19-references-and-credits)):
 
@@ -704,6 +712,10 @@ From these purely combinatorial identities follow two fundamental conservation l
 
 ### 4.3 Material (Hodge) Matrices: Where All Spatial Approximation Lives
 
+![Figure 4.3](user_manual_figures/section4/fig4_3_hodge_matrices.png)
+
+*Figure 4.3. Four ways to build the material (Hodge) matrices: diagonal, conformal cut cell, tensor averaging and curvilinear. All spatial approximation error lives here.*
+
 To close the Maxwell Grid Equations, we must relate the intensive voltage vectors $(\widehat{\mathbf{e}}, \widehat{\mathbf{h}})$ to the extensive flux vectors $(\widehat{\mathbf{d}}, \widehat{\mathbf{b}}, \widehat{\mathbf{j}}_\sigma)$. In the language of differential geometry and Discrete Exterior Calculus, this mapping between primal $k$-cochains and dual $(3-k)$-cochains is the **discrete Hodge star operator** ([Bossavit & Kettunen 2000](#19-references-and-credits); [Clemens & Weiland 2001](#19-references-and-credits)):
 
 $$\widehat{\mathbf{d}} = \mathbf{M}_\varepsilon\,\widehat{\mathbf{e}}, \qquad \widehat{\mathbf{h}} = \mathbf{M}_\nu\,\widehat{\mathbf{b}} = \mathbf{M}_\mu^{-1}\,\widehat{\mathbf{b}}, \qquad \widehat{\mathbf{j}}_\sigma = \mathbf{M}_\sigma\,\widehat{\mathbf{e}}.$$
@@ -730,6 +742,10 @@ $$\widehat{\mathbf{d}} = \mathbf{M}_\varepsilon\,\widehat{\mathbf{e}}, \qquad \w
 ---
 
 ### 4.4 Leapfrog Time Integration, CFL Stability, Discrete Energy, and Dispersion
+
+![Figure 4.4](user_manual_figures/section4/fig4_4_leapfrog_cfl.png)
+
+*Figure 4.4. Leapfrog time levels; the amplification roots ξ of one mode for several values of Δt²λ; and the field norm of one mode just below and just above the CFL limit Δt²λ = 4. The modified energy is conserved on both sides, but it is positive only below the limit.*
 
 #### Symplectic Leapfrog Scheme
 
@@ -794,6 +810,10 @@ Key physical takeaways:
 
 ### 4.5 Relation to FDTD (Yee 1966) and Discrete Exterior Calculus (DEC)
 
+![Figure 4.5](user_manual_figures/section4/fig4_5_fit_fdtd_dec.png)
+
+*Figure 4.5. FDTD, FIT and lowest-order edge-element FEM with a lumped mass matrix lead to the same algebraic system on a Cartesian grid. Discrete exterior calculus is the common language.*
+
 #### Algebraic Equivalence to Yee FDTD on Orthogonal Cartesian Grids
 
 On a uniform or nonuniform orthogonal Cartesian grid with diagonal material matrices, **FIT + leapfrog is algebraically identical to Kane Yee's Finite-Difference Time-Domain (FDTD) algorithm ([Yee 1966](#19-references-and-credits)).** Dividing the integral Faraday relation $\sum_k C_{mk}\widehat{e}_k = -d\widehat{b}_m/dt$ on a $yz$ primary face of area $\Delta y_j\Delta z_k$ by that area gives
@@ -816,6 +836,10 @@ Although FIT and FDTD coincide on a uniform Cartesian grid, viewing the scheme a
 
 ### 4.6 Relation to Finite Element Methods (FEM: Whitney/Nédélec Edge Elements)
 
+![Figure 4.6](user_manual_figures/section4/fig4_6_fit_vs_fem.png)
+
+*Figure 4.6. FIT compared with FEM. The Whitney (Galerkin) mass matrix couples neighbouring edges; the lumped mass matrix is diagonal. An acute triangle pair has a positive dual length; an obtuse pair has a negative (reversed) one. FIT is natural in the time domain, FEM in the frequency domain.*
+
 How does FIT relate to the **Finite Element Method (FEM)** using Nédélec $H(\text{curl})$-conforming (Whitney 1-form) edge elements ([Jin 2014](#19-references-and-credits); [Bossavit & Kettunen 1999](#19-references-and-credits); [Bossavit & Kettunen 2000](#19-references-and-credits))?
 
 In lowest-order edge-element FEM on a tetrahedral or triangular mesh, the unknown vector is the same vector of edge circulations $\widehat{\mathbf{e}}_k = \int_{L_k} \mathbf{E}\cdot d\boldsymbol{\ell}$, interpolated inside each element $T$ by Whitney 1-forms $\mathbf{w}_k(\mathbf{r})$ ($\mathbf{w}_{ij} = \lambda_i\nabla\lambda_j - \lambda_j\nabla\lambda_i$) and magnetic fluxes $\widehat{\mathbf{b}}_m$ interpolated by Whitney 2-forms $\mathbf{f}_m(\mathbf{r})$. Because $\nabla\times\mathbf{w}_k$ is a linear combination of the face 2-forms with coefficients $C_{mk}$, Faraday's law in a mixed Whitney FEM discretization is **identical** to the FIT Faraday grid equation:
@@ -834,6 +858,10 @@ The difference between mixed FEM and FIT lies exclusively in the **mass (Hodge) 
 ---
 
 ### 4.7 Relation to Other CEM Methods: FVTD, DGTD, FDFD, BEM/MoM, RCWA, Ray Tracing, and Fourier Optics
+
+![Figure 4.7](user_manual_figures/section4/fig4_7_cem_landscape.png)
+
+*Figure 4.7. The computational electromagnetics methods, arranged by what they discretize and by the electrical size of problem they suit.*
 
 To situate FIT within the complete landscape of computational electromagnetics—and across the modules in this repository and the sister libraries in our roadmap ([Section 17.2](#172-sister-libraries-in-the-computational-electromagnetics-ecosystem-planmd--planned))—here is how the major CEM families compare:
 
@@ -864,6 +892,10 @@ To situate FIT within the complete landscape of computational electromagnetics�
 
 ### 4.8 Master Comparison Table of Computational Electromagnetics Methods
 
+![Figure 4.8](user_manual_figures/section4/fig4_8_operator_structure.png)
+
+*Figure 4.8. The operator structure that each method stores and solves.*
+
 | Method | Domain | Mesh / Discretization | Unknowns | Matrix / Operator Structure | Key Strengths | Key Weaknesses / Failure Modes | Typical Open-Source & Reference Tools |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | **FIT (Orthogonal / Conformal / Tensor)** | Time (or Freq. via MGE) | Dual staggered grids: Cartesian (`GridFIT3D`), Delaunay–Voronoi triangles/tets, Voronoi polygons, extruded prisms | Integral edge voltages $`\widehat{\mathbf{e}}`$ & face fluxes $`\widehat{\mathbf{b}}`$ ($`O(N_{\text{vol}})`$) | Sparse topological $`\mathbf{C}, \mathbf{C}^T \in \{-1,0,1\}`$; **diagonal** (or local SPD) Hodge $`\mathbf{M}_\varepsilon, \mathbf{M}_\nu`$; **matrix-free** explicit step | Exact $`\nabla\cdot\mathbf{B}=0`$ & charge conservation; $`O(N)`$ memory; broadband in 1 run; fast GPU streaming; exact discrete adjoint | Global CFL $`\Delta t`$ limited by smallest cell; $`O(h^2)`$ numerical dispersion; Cartesian staircase error without conformal/tensor treatment | **Wakis** (`SolverFIT3D`, `UnstructuredFIT2D/3D`, `PolygonFIT2D`, `PrismFIT3D`), CST Studio Suite |
@@ -881,6 +913,10 @@ To situate FIT within the complete landscape of computational electromagnetics�
 ---
 
 ### 4.9 Decision Guide: When to Use Which Method
+
+![Figure 4.9](user_manual_figures/section4/fig4_9_decision_guide.png)
+
+*Figure 4.9. Decision guide for choosing a method; solvers available in Wakis are marked.*
 
 Use this practical checklist to pick the right solver (within Wakis or among its sister CEM libraries):
 
@@ -905,6 +941,10 @@ Use this practical checklist to pick the right solver (within Wakis or among its
 ---
 
 ### 4.10 Limits and Failure Modes of the Finite Integration Technique
+
+![Figure 4.10](user_manual_figures/section4/fig4_10_failure_modes.png)
+
+*Figure 4.10. Six failure modes of FIT and their remedies.*
 
 Every numerical method has boundary conditions where its assumptions break down. Understanding FIT's failure modes prevents wasted compute and subtle physics bugs:
 
