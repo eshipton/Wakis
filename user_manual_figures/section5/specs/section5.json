@@ -1,0 +1,78 @@
+{
+ "section": "section5",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G and its quantities in blue, dual grid G-tilde and its quantities in orange, exact/topological items in dark grey, approximate/material items in green, failure or warning items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig5_2_phasor_conventions",
+   "subsection": "5.2",
+   "route": "generated",
+   "source_lines": [
+    1002,
+    1006,
+    1008,
+    1011,
+    1012,
+    1013,
+    1014,
+    1016,
+    1018,
+    1019,
+    1020,
+    1021,
+    1024,
+    1026
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 5.2: Time-harmonic phasor conventions. Left: Wakis uses exp(+iωt), so passive lossy media have Im ε_r(ω) ≤ 0, forward waves along +x vary as exp(i(ωt − kx)), Bloch boundaries wrap by exp(−ik_Bloch · L), and decaying resonances in harminv have F_k = f_k + i g_k with g_k > 0. Centre: optics codes (fmmax, Meep, ceviche) use exp(−iωt), flipping the sign of i. Right: real power observables are identical in both conventions, whereas complex phasors and permittivities are complex conjugates across the real axis.",
+   "visual_intent": "Three panels side by side. LEFT PANEL (blue border, heading 'Wakis: exp(+iωt)'): four stacked rounded cards in light blue: Card 1 'DFT: F(r, f) = ∫ F(r, t) e^(−2πift) dt', Card 2 'Passive lossy media: ñ = n − iκ (κ ≥ 0),  Im ε_r(ω) ≤ 0', Card 3 'Forward +x wave: exp(i(ωt − kx));  Bloch wrap: exp(−ik_Bloch · L)', Card 4 'harminv ring-down: F_k = f_k + i g_k  (g_k > 0,  Q_k = f_k / (2g_k) > 0)'. CENTRE PANEL (orange border, heading 'Optics codes (fmmax, Meep, ceviche): exp(−iωt)'): three stacked rounded cards in light orange: Card 1 'DFT: F_opt(ω) = ∫ F(t) e^(+iωt) dt', Card 2 'Passive lossy media: ñ = n + iκ,  Im ε_r ≥ 0', Card 3 'Forward +x wave: exp(+ikx)'. RIGHT PANEL (heading 'Comparing results'): a complex plane with horizontal axis 'Re ε_r' and vertical axis 'Im ε_r'. In the upper half-plane (shaded light orange, labelled 'Im ε_r ≥ 0') draw an orange dot labelled 'ε_r^optics(ω)'. In the lower half-plane (shaded light blue, labelled 'Im ε_r ≤ 0') draw the mirror-reflected blue dot labelled 'ε_r^Wakis(ω)'. Connect the two dots with a vertical green double-headed arrow across the real axis labelled 'complex conjugate'. Below the complex plane, two summary badges stacked: green badge 'Complex phasors: S_ij^Wakis = conj(S_ij^fmmax/Meep),  ε_r^Wakis = conj(ε_r^optics)' and dark grey badge 'Identical real power quantities: Φ(f), Q_sca, Q_ext, η_{m,n}, |S_ij|'."
+  },
+  {
+   "id": "fig5_3_staggering_and_synchronization",
+   "subsection": "5.3",
+   "route": "scripted",
+   "source_lines": [
+    1030,
+    1033,
+    1034,
+    1035,
+    1036,
+    1037,
+    1038,
+    1039,
+    1043,
+    1047,
+    1048,
+    1049,
+    1051,
+    1052,
+    1053,
+    1054,
+    1055
+   ],
+   "aspect_ratio": "16:9",
+   "caption": "Figure 5.3: Temporal and spatial staggering of E and H and their second-order synchronization in Wakis monitors and ports. Left: inside solver.one_step(), H is updated to t_H = (n+1/2)Δt and E to t_E = (n+1)Δt; when monitors run at the end of step n, DFTMonitor synchronizes E(f) and H(f) to O(Δt²) with half-step phase factors, while LumpedPort averages E^n and E^{n+1} to sample V̄^{n+1/2} and I^{n+1/2} at τ = (n+1/2)Δt. Right: on a monitor plane x = x_i, tangential E_y, E_z sit on x_i while tangential H_y, H_z sit at x_{i−1/2} and x_{i+1/2} and are averaged across the two bracketing planes to O(Δx²).",
+   "visual_intent": "Scripted Matplotlib recipe (two panels, 13.76 × 7.68 in at 200 dpi). LEFT PANEL (temporal staggering and synchronization, lines 1033–1036, 1047–1049, 1054–1055): draw a horizontal time axis t with exact ticks at u = -0.5, 0.0, 0.5, 1.0 labelled '(n−1/2)Δt', 'nΔt', 't_H = (n+1/2)Δt', and 't_E = (n+1)Δt'. Plot blue circles at u = 0, 1 for E^n and E^{n+1}, and orange squares at u = -0.5, 0.5 for H^{n−1/2} and H^{n+1/2}. Draw curved orange arrow 1 from u = -0.5 to u = 0.5 passing through E^n at u = 0 labelled '1. update H to t_H = (n+1/2)Δt', and curved blue arrow 2 from u = 0 to u = 1 passing through H^{n+1/2} at u = 0.5 labelled '2. update E to t_E = (n+1)Δt'. Draw a vertical dark-grey dashed line just after u = 1 labelled 'monitors & callbacks run at end of step n', and a red horizontal double-arrow between u = 0.5 and u = 1.0 labelled 'Δt/2 offset (unsynchronized: O(ωΔt) phase error)'. Beneath the timeline, typeset in a green-bordered box the two exact synchronization rules: (a) DFTMonitor phase factors from line 1048: 'E_DFT(f) = Σ E^{n+1} exp(−2πi f (n+1)Δt) Δt' (blue) and 'H_DFT(f) = Σ H^{n+1/2} exp(−2πi f (n+1/2)Δt) Δt' (orange), and (b) LumpedPort time average at τ = (n+1/2)Δt from line 1055: 'I^{n+1/2},  V̄^{n+1/2} = −Σ_e g_e (E_e^n + E_e^{n+1})/2', tagged 'O(Δt²) synchronized'. RIGHT PANEL (spatial staggering and monitor-plane averaging, lines 1037–1039, 1051–1053): draw a 2D (x, y) grid cross-section of two adjacent primary cells [x_{i−1}, x_i] × [y_j, y_{j+1}] and [x_i, x_{i+1}] × [y_j, y_{j+1}] with primary vertical lines at x_{i−1}, x_i, x_{i+1} (blue) and dual vertical dashed lines at midpoints x_{i−1/2}, x_{i+1/2} (orange). Highlight the plane x = x_i with a thick green vertical line labelled 'monitor plane x = x_i'. Plot tangential electric field markers on x = x_i: blue arrow at (x_i, y_{j+1/2}) labelled 'E_y(x_i, y_{j+1/2}, z_k)' and blue circled-dot at (x_i, y_j) labelled 'E_z(x_i, y_j, z_{k+1/2})'. Plot bracketing tangential magnetic field markers at x_{i−1/2} and x_{i+1/2}: orange squares at (x_{i±1/2}, y_j) labelled 'H_y(x_{i±1/2}, y_j, z_{k+1/2})' and at (x_{i±1/2}, y_{j+1/2}) labelled 'H_z(x_{i±1/2}, y_{j+1/2}, z_k)'. Draw two curved green arrows from x_{i−1/2} and x_{i+1/2} converging onto x = x_i, with the exact spatial averaging formula from line 1052 below: 'H_t(x_i) = ½ (H_t(x_{i−1/2}) + H_t(x_{i+1/2}))' and green tag 'co-located on monitor plane to O(Δx²)'."
+  },
+  {
+   "id": "fig5_4_cfl_across_grid_families",
+   "subsection": "5.4",
+   "route": "generated",
+   "source_lines": [
+    1059,
+    1060,
+    1062,
+    1064,
+    1066,
+    1067,
+    1068,
+    1069,
+    1070,
+    1071
+   ],
+   "aspect_ratio": "21:9",
+   "caption": "Figure 5.4: How Wakis sets the CFL time step Δt across its three mesh families. Left: on uniform or graded Cartesian grids (SolverFIT3D), Δt is governed by the minimum cell dimensions (Δx_min, Δy_min, Δz_min) and Courant factor cfln (default 0.5). Centre: with conformal Dey–Mittra PEC (conformal='pec'), symmetric flux redistribution on small cut faces keeps the stable step at 0.85–0.97 of the uncut Yee limit (studies/conformal-pec-mask/). Right: on unstructured simplex, polygon, and prism meshes, Δt is set from the maximum eigenvalue λ_max of M_ε⁻¹ Cᵀ M_ν C.",
+   "visual_intent": "Three equal panels in a row. LEFT PANEL (blue border, heading '1. Uniform & Nonuniform Cartesian (SolverFIT3D)'): a graded 2D Cartesian grid patch where the narrowest cell is highlighted in blue and labelled 'Δx_min, Δy_min, Δz_min'. Below the grid, the exact equation 'Δt = cfln / (c₀ √(1/Δx_min² + 1/Δy_min² + 1/Δz_min²))' and three stacked parameter badges: blue badge 'default cfln = 0.5 (2× margin for graded grids, CPML, lumped, ADE)', green badge 'vacuum / dielectric: cfln = 0.9 or 0.95', dark grey badge 'scheme=\"tete\": cfln = 1.0'. CENTRE PANEL (green border, heading '2. Conformal Dey–Mittra PEC (conformal=\"pec\")'): a Cartesian cell cut by a smooth curved grey PEC boundary leaving a small cut face (shaded light orange) with a green arrow redistributing flux to its stable in-plane neighbours. Below the drawing: 'small cut faces stabilized by symmetric flux redistribution' and a green badge 'measured stable Δt: 0.85–0.97 of uncut Yee limit (studies/conformal-pec-mask/)'. RIGHT PANEL (orange border, heading '3. Unstructured Simplex, Polygon & Prism'): a small unstructured triangle/polygon/prism mesh patch next to the operator badge 'M_ε⁻¹ Cᵀ M_ν C  →  λ_max'. Below, the exact equation 'Δt = cfl · 2 / √λ_max' and two parameter badges: blue badge 'UnstructuredFIT2D, PolygonFIT2D, PrismFIT3D, UnstructuredFIT3D: default cfl = 0.95' and orange badge 'DGTD2D: default cfl = 0.8 (LSRK stability region)'."
+  }
+ ]
+}

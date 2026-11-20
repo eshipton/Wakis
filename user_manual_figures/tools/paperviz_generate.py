@@ -43,6 +43,21 @@ def subsection_text(manual: Path, number: str) -> str:
     return text[m.start() : end].strip()
 
 
+def subsection_numbers(spec: str) -> list:
+    """Expand ``"11.6-11.7"`` or ``"11.6, 11.7"`` to ``["11.6", "11.7"]``."""
+    parts = [s.strip() for s in re.split(r"[,/]", str(spec)) if s.strip()]
+    out = []
+    for part in parts:
+        a, _, b = part.partition("-")
+        if b:
+            major, lo = a.split(".")
+            hi = b.split(".")[-1]
+            out += [f"{major}.{k}" for k in range(int(lo), int(hi) + 1)]
+        else:
+            out.append(a)
+    return out
+
+
 def probe(client, candidates, image):
     """Return the first model id that answers a minimal request."""
     from google.genai import types
@@ -101,11 +116,18 @@ async def run(args):
     spec = json.loads(Path(args.spec).read_text(encoding="utf-8"))
     manual = Path(args.manual).resolve()
     out = Path(args.out).resolve()
-    figures = [f for f in spec["figures"] if not args.only or f["id"] in args.only]
+    figures = [
+        f
+        for f in spec["figures"]
+        if f.get("route", "generated") == "generated"
+        and (not args.only or f["id"] in args.only)
+    ]
 
     inputs = []
     for fig in figures:
-        body = subsection_text(manual, fig["subsection"])
+        body = "\n\n".join(
+            subsection_text(manual, n) for n in subsection_numbers(fig["subsection"])
+        )
         for c in range(args.candidates):
             inputs.append(
                 {

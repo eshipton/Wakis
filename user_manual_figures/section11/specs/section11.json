@@ -1,0 +1,128 @@
+{
+ "section": "section11",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G and its quantities in blue, dual grid G-tilde and its quantities in orange, exact/topological items in dark grey, approximate/material items in green, failure or warning items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig11_1_triangle_and_polygon_fit",
+   "subsection": "11.1-11.2",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    1942,
+    1945,
+    1978,
+    1982,
+    1984,
+    1985,
+    1994,
+    1998,
+    2002,
+    2011
+   ],
+   "caption": "Figure 11.1: 2D unstructured and polygonal FIT discretizations (UnstructuredFIT2D and PolygonFIT2D). (1) Well-centred Delaunay triangles with orthogonal circumcentric Voronoi dual polygons (hodge='voronoi', diagonal mass, div curl = 0). (2) Barycentric dual cells (hodge='barycentric') that stay positive on obtuse triangles. (3) Centroidal Voronoi honeycomb mesh (voronoi_disk_mesh, hodge='orthogonal') with half the bulk numerical dispersion of triangles or squares (1.95× fewer unknowns on B1 TM). (4) Hybrid square/triangle mesh (hybrid_circles_mesh, hodge='auto') combining Cartesian squares in the bulk with body-fitted triangles at curved interfaces and MFD Hodge on transition cells.",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script using scipy.spatial.Delaunay and scipy.spatial.Voronoi): A row of 4 equal square panels (1 to 4). PANEL 1 'UnstructuredFIT2D: hodge=\"voronoi\"': Generate a well-centred 2D Delaunay triangulation (blue solid edges) and compute the exact circumcentres (orange dots) and Voronoi dual polygons (orange dashed edges perpendicular to blue primary edges with a small right-angle mark). Caption below: 'orthogonal dual: diagonal Hodge, div curl = 0'. PANEL 2 'UnstructuredFIT2D: hodge=\"barycentric\"': Draw a triangle patch containing an obtuse triangle; compute and connect the exact triangle centroids (orange dots) to the edge midpoints to form the barycentric dual cell around an interior vertex (shaded light orange). Caption below: 'positive dual area on obtuse triangles'. PANEL 3 'PolygonFIT2D: voronoi_disk_mesh': Run Lloyd-relaxed centroidal Voronoi tessellation inside a disk; draw the nearly hexagonal Voronoi primary cells in blue and the orthogonal Delaunay dual edges in orange. Caption below: 'hodge=\"orthogonal\": ½ lattice dispersion (1.95× fewer unknowns on B1 TM)'. PANEL 4 'PolygonFIT2D: hybrid_circles_mesh': Draw an arc of the circular interface r = 1 μm (thick dark grey curve), body-fitted Delaunay triangles hugging the circle (blue), regular Cartesian squares in the outer bulk (blue), and highlight one polygonal transition cell between squares and triangles in light green with label 'hodge=\"auto\": diagonal in bulk, hodge=\"mfd\" on transition cells'."
+  },
+  {
+   "id": "fig11_2_subgrid_and_subtri",
+   "subsection": "11.3-11.4",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2019,
+    2022,
+    2023,
+    2024,
+    2036,
+    2050,
+    2057,
+    2060,
+    2061,
+    2063,
+    2074
+   ],
+   "caption": "Figure 11.2: 2:1 Cartesian subgridding (SubgridFIT2D) and hybrid quadtree + body-fitted triangles (SubTriFIT2D / subtri). Left: at a 2:1 coarse/fine interface, hanging nodes are constrained by linear prolongation u_all = P u and fine-to-coarse fluxes are restricted by the exact transpose Pᵀ, conserving discrete energy to round-off (drift ≤ 4×10⁻¹⁵). Centre: SubgridFIT2D refines a 2:1 QuadMesh near the curved rim with subpixel-averaged cut square leaves (2.3–2.4× less work on dielectric B1, but first-order on curved TE metals B2). Right: subtri_circles_mesh replaces a ±2h collar around curved interfaces and narrow gaps with conforming Delaunay triangles tied to the quadtree by P (5–7× less work on B1).",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script): Three panels in a row. LEFT PANEL 'Symmetric hanging-node prolongation P / Pᵀ': Draw one coarse square cell on the left (blue) sharing a vertical 2:1 interface with two fine square cells on the right (blue). Mark the unconstrained master nodes with blue circles ('u') and the midpoint hanging node with an orange diamond ('hanging node'). Draw blue arrows from the coarse nodes to the hanging node labelled 'linear prolongation: u_all = P u' and orange reverse arrows labelled 'fine-to-coarse restriction: Pᵀ (exact transpose)'. Below the panel display the exact update equations from line 2023: 'f^{n+1/2} = f^{n−1/2} − Δt (G P) u^n' and 'D (u^{n+1} − u^n) = Δt (G P)ᵀ W f^{n+1/2}' with green badge 'energy drift ≤ 4×10⁻¹⁵ over 10⁵ steps'. CENTRE PANEL 'SubgridFIT2D (QuadMesh, ratio=2, max_level=2)': Draw a quadrant of a circle r = 1.0e-6 (dark grey curve) overlaid with a 2-level 2:1 balanced quadtree mesh refined in the rim |r − a| < d. Shade the square leaf cells cut by the circle in light green ('subpixel material averaging on cut leaf cells'). Bottom note: 'B1: 2.3–2.4× less work; B2 curved metal in TE: drops to 1st order'. RIGHT PANEL 'SubTriFIT2D (subtri_circles_mesh)': Draw the circular interface with coarse quadtree squares (2^L h) outside, finest squares (h) inside the circle, and remove the ±2h band around the curved interface to fill it with a conforming Delaunay triangulation (blue triangles, with orange hanging-node markers on the square-to-triangle boundary tied by P: 'K = G P, D = Pᵀ m'). Bottom green note: 'body-fitted collar + quadtree bulk: 5–7× less work on B1, drift ≤ 2×10⁻¹⁵'."
+  },
+  {
+   "id": "fig11_3_curvilinear_ogrid_nfit",
+   "subsection": "11.5",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2094,
+    2096,
+    2097,
+    2107,
+    2108,
+    2109,
+    2115,
+    2122,
+    2126
+   ],
+   "caption": "Figure 11.3: 2D Curvilinear O-Grid Non-Orthogonal FIT (CurvilinearFIT2D). Left: body-fitted polar O-grid (ogrid_mesh) with graded radial nodes (radial_nodes: 0.04 μm inside r ≤ a = 1.0 μm, 0.08 μm outside, and radial PML in r ∈ [r₀, r₁] = [2.0, 2.6] μm) and multi-block O-grid/Cartesian transition (ogrid_cartesian_mesh). Right: on a skewed curvilinear cell where primary and dual edges are non-orthogonal, a symmetric flux-to-voltage Hodge maps fluxes to voltages while keeping the node mass M diagonal (explicit leapfrog, zero matrix inversions, energy drift 7×10⁻¹⁶).",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script): Two panels side by side (56% left, 44% right). LEFT PANEL: Plot an exact 2D polar/multi-block O-grid sector using the manual parameters from lines 2107-2109: cylinder interface at radius a = 1.0e-6 (1.0 μm, thick blue circle, '128 azimuthal cells'), denser radial rings inside r <= a ('0.04e-6 (40 nm) inside', shaded light blue for 'materials={1: [4.0, 1.0]}'), coarser radial rings outside a < r <= r0 = 2.0e-6 ('0.08e-6 (80 nm) outside'), and an outer green shaded annular ring r in [r0, r1] = [2.0e-6, 2.6e-6] labelled 'pml = dict(kind=\"radial\", r0=2.0 μm, r1=2.6 μm)'. Include a small inset in the lower corner showing the multi-block 'ogrid_cartesian_mesh / boxed_cylinders_mesh' topology around a cylinder. RIGHT PANEL: Zoom in on one skewed non-orthogonal quadrilateral primary cell (blue solid edges) and its staggered dual cell (orange dashed edges). Draw the primary edge vector and dual edge vector meeting at a visibly non-orthogonal angle with an orange arc. Draw green coupling arrows between the edge components labelled 'symmetric flux-to-voltage Hodge (Schuhmann & Weiland 2000)'. Below the cell, list three concise badges from lines 2097 and 2122: green 'diagonal node mass M ⇒ explicit leapfrog, zero matrix inversions', grey 'energy drift 7×10⁻¹⁶, radial PML reflection 5×10⁻⁵', and blue 'B1 at 1% RMS: 158k (TM) / 176k (TE) unknowns (~4× faster than graded conformal Cart.)'."
+  },
+  {
+   "id": "fig11_4_prism_and_tet_3d",
+   "subsection": "11.6-11.7",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2131,
+    2133,
+    2134,
+    2144,
+    2154,
+    2155,
+    2156,
+    2163,
+    2165,
+    2166,
+    2184,
+    2186
+   ],
+   "caption": "Figure 11.4: 3D unstructured solvers: extruded triangular prisms (PrismFIT3D) versus general tetrahedra (UnstructuredFIT3D). Left: PrismMesh extrudes body-fitted 2D (x, y) triangles across independent 1D z layers z₀ < z₁ < … < z_K; the 2D Voronoi dual × 1D z dual keeps all 3D Hodge matrices strictly diagonal, while PolygonComplex2D (merge_tol=0.15) merges nearly cocircular triangle pairs into quadrilaterals to eliminate short Voronoi dual edges. Right: UnstructuredFIT3D discretizes e on tetrahedral edges and b on triangular faces, offering fast diagonal hodge='voronoi' (52 ns/tet/step) and unconditionally SPD hodge='whitney' (sparse LU via splu) when sliver tetrahedra have exterior circumcentres.",
+   "visual_intent": "Two equal panels side by side. LEFT PANEL headed '3D Extruded Prism FIT (PrismFIT3D)': Top half shows an isometric 3D triangular prism element (blue) formed by extruding a 2D (x, y) triangle across independent 1D z layers along a vertical axis 'z₀ < z₁ < … < z_K'. Inside the prism draw the orthogonal 2D Voronoi dual polygon in (x, y) extruded along the 1D z dual (orange), with a green badge '2D Voronoi dual × 1D z dual ⇒ all 3D Hodge matrices strictly diagonal (GPU acceleration)'. Bottom half inset titled 'PolygonComplex2D (merge_tol=0.15)': on the left, two nearly cocircular triangles sharing a diagonal edge with two circumcentres (orange dots) almost touching, connected by a tiny red dual edge labelled 'short Voronoi dual edge shrinks 3D CFL timestep'; an arrow 'merge' points to a single merged blue quadrilateral on the right with one clean central dual vertex (green check). Bottom note: '220 nm Si micro-ring: 15× fewer unknowns, 22× less work than Cart.; ~28× faster in wall time than 3D tets on rod cavity'. RIGHT PANEL headed '3D Tetrahedral FIT (UnstructuredFIT3D)': Top half shows a 3D tetrahedron (blue primal edges carrying electric voltages 'e' with arrows, shaded blue primal triangular face carrying magnetic flux 'b' pierced by an orange dual edge). Bottom half compares two cards: Card 1 'hodge=\"voronoi\"': 'diagonal Delaunay–Voronoi Hodge, explicit leapfrog (52 ns/tet/step)', with a red warning sketch of a flat sliver tetrahedron whose orange circumcentre lies outside it ('sliver tetrahedron: negative dual entries'). Card 2 'hodge=\"whitney\" (Bossavit & Kettunen 1999)': 'consistent non-diagonal Whitney 1-form / 2-form mass matrices, unconditionally SPD on slivers (sparse LU via splu, O(N_tet^1.5) memory)'."
+  },
+  {
+   "id": "fig11_5_local_time_stepping",
+   "subsection": "11.8",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2190,
+    2192,
+    2193,
+    2204,
+    2211,
+    2212,
+    2214
+   ],
+   "caption": "Figure 11.5: Stabilized Leapfrog–Chebyshev Local Time Stepping (UnstructuredFIT2D(lts=2), Diaz & Grote 2009). Left: on a spatially graded mesh (h_max / h_min ≥ 2), only the narrow band of fine nodes F next to the scatterer (3–23% of the nodes, outside the outer radial PML and with σ = 0) takes sub-steps. Right: during each step, coarse nodes advance by 1.94× the global step while the fine band F takes 2 damped Chebyshev sub-steps (lts=2), conserving an exact discrete energy (drift 2×10⁻¹⁴ over 10⁵ steps) and halving total steps on B2 and B3.",
+   "visual_intent": "Two panels side by side. LEFT PANEL (48% width) headed 'Spatial partition: fine band F vs. coarse nodes': Draw a 2D graded unstructured mesh around a circular scatterer (or narrow dimer gap). Shade the narrow collar of tiny triangles immediately surrounding the interface in orange, labelled 'fine nodes F (3–23% of the nodes, h_max / h_min ≥ 2): 2 Chebyshev substeps'. Shade the scatterer interior and the outer graded mesh in light blue, labelled 'coarse nodes (cylinder included): 1.94× the global step'. Shade the outermost ring in light grey labelled 'outer radial PML (excluded from F; σ = 0 in F)'. RIGHT PANEL (52% width) headed 'Time-stepping schedule: lts=1 (global leapfrog) vs. lts=2 (Leapfrog–Chebyshev)': Top timeline labelled 'Global leapfrog (lts=1)' in red/grey: all nodes march in small steps of size 'Δt_global'. Bottom timeline labelled 'Stabilized LTS (lts=2, Diaz & Grote 2009)' in blue/orange: coarse nodes (blue circles) take one large step of length '1.94× the global step', while fine nodes F (orange squares) take '2 damped Chebyshev substeps (lts=p)'. Below the timelines, display three badges exact to the manual: green 'exact discrete energy: drift 2×10⁻¹⁴ over 10⁵ steps', grey 'exact discrete adjoint: dot-product test < 10⁻¹⁴', and blue 'B2 / B3: 2× fewer steps with unchanged error (≈ 1.75× median wall-time speedup)'."
+  },
+  {
+   "id": "fig11_6_high_order_dgtd_fdtd24",
+   "subsection": "11.9",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2218,
+    2220,
+    2221,
+    2222,
+    2223,
+    2237,
+    2241,
+    2243,
+    2247,
+    2248,
+    2249,
+    2251
+   ],
+   "caption": "Figure 11.6: High-order solvers for dispersion-dominated problems (DGTD2D and FDTD24). Left: straight-sided p = 4 triangles approximate a curved interface r = 1 μm by a polygonal chord and stall at 1–5% error, whereas isoparametric curved DGTD2D elements (p = 1–5, circles_mesh) conform to the boundary and exchange upwind Riemann fluxes under LSRK(5,4). Centre: the fourth-order staggered Cartesian (2,4) stencil of FDTD24. Right: measured unknown counts from studies/highorder-mie and studies/highorder-bench on B1 (0.1% TM RMS error: ~2.1 M unknowns for graded triangles vs. 17k for curved DGTD2D p = 5, ~100× fewer unknowns and ~28× faster) and B2-Au-TE (0.1% Q_ext NRMS: 88k vs. 6.0k unknowns at p = 2).",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script): Three panels in a row. LEFT PANEL 'Curved vs. straight high-order triangles (DGTD2D)': Draw an exact circular arc of radius r = 1.0e-6 (1 μm, dark grey curve). On the upper half of the arc, draw a straight-sided triangle whose straight chord cuts across the circle, shading the chord-to-arc geometric error lens in red with label 'straight-sided p = 4: polygonal chord stalls at 1–5% error'. On the lower half of the arc, draw two adjacent isoparametric curved triangles ('circles_mesh, p = 5') whose boundary edges follow the exact circle r = 1 μm, populated with the p = 5 Hesthaven–Warburton nodal interpolation points (blue dots), with orange double arrows across the shared elemental face labelled 'upwind Riemann flux + LSRK(5,4)'. CENTRE PANEL 'Cartesian (2,4) staggered stencil (FDTD24)': Draw a staggered Cartesian grid line with a central blue electric node and its four bracketing orange magnetic nodes (two inner neighbours and two outer neighbours) connected by curved stencil arcs: inner arcs (thick blue) and outer arcs (thin orange), labelled 'FDTD24: fourth-order staggered spatial differences (order=4, time_scheme=\"lsrk4\")'. RIGHT PANEL 'Unknowns to reach 0.1% error (manual Sec. 11.9)': Plot an exact horizontal log-scale bar chart using ONLY the exact numbers in lines 2247-2248: Group 1 'B1 Mie cylinder (0.1% TM RMS)': grey bar 'Graded triangles + PML: ~2.1 M unknowns (~2600 s)', blue bar 'Curved DGTD2D p = 5: 17k unknowns (91 s, ~100× fewer, ~28× faster)', and green marker at '25k unknowns (reaches 0.01% RMS)'. Group 2 'B2-Au-TE (0.1% Q_ext NRMS)': grey bar 'Uniform triangles: 88k unknowns', blue bar 'Curved DGTD2D p = 2: 6.0k unknowns (14.7× fewer)'."
+  }
+ ]
+}

@@ -1,0 +1,61 @@
+{
+ "section": "section9",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G, incident waves, and Wakis-recommended boundaries in blue; dual grid G-tilde, phase-shifted/auxiliary quantities, and secondary items in orange; exact/topological/reference items in dark grey; matched absorbing/material items in green; spurious reflection, corner mismatch, or warning items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig9_1_bloch_periodic",
+   "subsection": "9.2",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    1684,
+    1685,
+    1699,
+    1701,
+    1710,
+    1711,
+    1712,
+    1716,
+    1717,
+    1718,
+    1719,
+    1720,
+    1726
+   ],
+   "caption": "Figure 9.1: Bloch-periodic boundaries ('bloch') versus standard periodic boundaries ('periodic'). Left: an obliquely incident plane wave on a unit cell of period L wraps across opposite walls with the Floquet–Bloch phase factor exp(−i k_Bloch · L) using complex fields (dtype=np.complex128), while top and bottom faces are terminated with 'cpml' (n_pml=10). Right: because k_bloch fixes the tangential wavevector k_∥ = (k_x, k_y) across the time-domain run, a broadband pulse sweeps the incidence angle θ(f) = arcsin(c |k_∥| / (2π f n_inc)) with frequency.",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script): Two panels side by side (52% left, 48% right). LEFT PANEL: Draw a 2D unit-cell rectangle of period L. Shade top and bottom strips of thickness n_pml=10 in light green labelled 'bc_low / bc_high: cpml (n_pml=10)'. Inside the cell, plot the exact wave crest lines of Re[exp(i(k_x x + k_z z))] at polar incidence angle theta = 30 deg (blue lines) with an incident wavevector arrow labelled 'k' at angle 'theta = 30 deg' to the normal, decomposed into a horizontal orange arrow 'k_∥ = (k_x, k_y)' and a vertical grey arrow. Highlight the left and right walls in orange, joined by a curved orange arrow across the top labelled 'F(r + L) = exp(−i k_Bloch · L) F(r)' and badge 'bc = bloch, dtype = np.complex128'. Include a small grey inset at the bottom-left showing normal-incidence wavefronts with badge 'bc = periodic: F(r + L) = F(r)'. RIGHT PANEL: Plot the exact analytical curve from the manual formula θ(f) = arcsin(c |k_∥| / (2π f n_inc)) (line 1726) evaluated via wakis.bloch.incidence_angle(k_bloch, freqs) for k_bloch = k_parallel(f0, theta, phi=0.0, n=1.0) with f0 = 300e12 (300 THz, lambda = 1 um), theta = np.deg2rad(30.0) (30 deg), phi = 0.0, and n = 1.0 (lines 1710-1712). Mark the reference point (300 THz, 30 deg) with an orange dot and dashed guide lines labelled 'f0 = 300 THz (lambda = 1 um), theta = 30 deg'. Annotate the curve with 'θ(f) = arcsin(c |k_∥| / (2π f n_inc))' and 'wakis.bloch.incidence_angle(k_bloch, freqs)'. Axes: horizontal 'frequency f', vertical 'incidence angle θ(f)'."
+  },
+  {
+   "id": "fig9_2_cpml_vs_pml",
+   "subsection": "9.3",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    1686,
+    1687,
+    1730,
+    1733,
+    1734,
+    1735,
+    1736,
+    1737,
+    1738
+   ],
+   "caption": "Figure 9.2: Why Convolutional PML ('cpml') outperforms legacy split-less 'pml'. Topleft: legacy 'pml' adds only conductivity (σ_e, σ_m) without coordinate stretching or auxiliary variables, causing −20 to −30 dB reflections at grazing angles and low frequencies. Bottomleft: CFS-'cpml' stretches coordinates via s_w(ω) = κ_w + σ_w / (α_w + iωε₀) using recursive-convolution memory variables ψ_{E,ab}, ψ_{H,ab} allocated only in the outer n_pml cells, achieving < −50 to −70 dB reflection. Right: polynomial grading across the n_pml=10 slab.",
+   "visual_intent": "Two columns. LEFT COLUMN (55% width), two stacked cross-sections of a domain boundary with an outer absorbing slab of thickness 'n_pml': TOP BOX titled in red 'Legacy pml (unsplit damper: σ_e, σ_m only)': an incident blue ray strikes the absorbing slab at a shallow grazing angle and reflects strongly back into the domain as a thick red arrow labelled 'grazing & low-f reflection: −20 to −30 dB'; small grey note 'no coordinate stretch, no auxiliary memory'. BOTTOM BOX titled in green 'CFS-cpml (Roden & Gedney 2000)': the same grazing blue ray enters the green 'n_pml=8–12' slab, bends toward the normal and decays smoothly to nothing, with a tiny faint arrow labelled 'reflection < −50 to −70 dB'; inside the green rim only, draw small orange memory blocks labelled 'ψ_{E,ab}, ψ_{H,ab} allocated only in n_pml slab'. Between the two boxes display the stretched-coordinate equation: 's_w(ω) = κ_w + σ_w / (α_w + iωε₀),  w ∈ {x, y, z}'. RIGHT COLUMN (45% width): a schematic profile across the boundary slab from the interface (left vertical dashed line 'inner face') to the outer PEC wall (right vertical line 'domain wall, n_pml=10 cells'). Show a smooth quartic polynomial curve ('pml_exp = 4 (order m)') rising from 0 at the interface to 'σ_opt = 0.8(m+1) / (η₀ Δx)' (blue curve) and 'κ_max = 5' (orange curve) at the outer wall, and a green curve for 'α_max = 0.05' ('CFS pole shift: grazing & late-time stability'). Bottom grey badge: 'works with use_gpu=True (fused=True), use_mpi=True, bloch (complex128), and wakis.inverse'."
+  },
+  {
+   "id": "fig9_3_radial_cfs_pml",
+   "subsection": "9.5",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    1748,
+    1750
+   ],
+   "caption": "Figure 9.3: Absorbing layers on unstructured scattering meshes. Left: truncating a cylindrical or spherical wave with a Cartesian box PML produces oblique incidence and impedance mismatches in the four corners. Right: Wakis's annular / spherical radial CFS-PML stretches the radial coordinate r and integrated cylindrical phase r̃ smoothly across the outer ring r ∈ [r_pml, R_outer], matching the outgoing wavefronts everywhere to achieve < 0.2% reflection.",
+   "visual_intent": "Two square panels side by side. LEFT PANEL headed in red 'Cartesian box PML on outgoing circular wave': a central scatterer (grey circle) surrounded by an unstructured triangle mesh inside a square PML frame. Concentric blue circular wavefronts expand radially from the centre; where the circular wavefronts meet the four square corners of the box PML, mark red warning zones with reflected red ripples labelled 'corner impedance mismatch'. RIGHT PANEL headed in green 'Radial CFS-PML on unstructured mesh': the same central scatterer surrounded by a Delaunay triangle mesh (blue edges) inside r < r_pml, enclosed by a concentric annular green ring 'r ∈ [r_pml, R_outer]' of thickness 'pml_thickness'. The circular blue wavefronts enter the annular ring perpendicularly at every azimuth (small right-angle marks between radial arrows and wavefront circles) and fade smoothly across the ring. Below the right panel, display the complex radial coordinate stretch equation exact to the manual: 'r̃ = r + (1 / iωε₀) ∫_{r_pml}^r σ(ρ) dρ' and two short badges: orange '2 auxiliary state variables per edge/cell' and green '< 0.2% reflection on UnstructuredFIT2D, PolygonFIT2D, PrismFIT3D, UnstructuredFIT3D'."
+  }
+ ]
+}

@@ -1,0 +1,92 @@
+{
+ "section": "section13",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: forward state and primary grid quantities in blue, adjoint state and backward-pass quantities in orange, exact/structural operators in dark grey, design parameterization and projection items in green, failure or high-cost items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig13_1_discrete_adjoint_chain",
+   "subsection": "13.1",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2331,
+    2337,
+    2339,
+    2341,
+    2343,
+    2347,
+    2349,
+    2352,
+    2354,
+    2355,
+    2364,
+    2365
+   ],
+   "caption": "Figure 13.1: Exact discrete adjoint sensitivity analysis in wakis.inverse. Top: the forward pass steps the complete SolverFIT3D state vector u^n = (e^n, h^{n+1/2}, ψ^n, p^n, J_L^n) from n = 0 to N_t via the linear operator M(ρ) and records the unscaled curl increments q_e^n on the design edges. Middle: the backward (adjoint) pass steps the Lagrange multipliers λ^n from λ^{N_t} = 0 down to n = 0 via the exact Hermitian transpose M(ρ)† driven by (∂J/∂u^n)†. Contracting λ̄_{E,e}^{n+1} with q_e^n yields the exact discrete gradient wrt all N_design parameters at ≈ 2.2× the cost of one forward run. Bottom: the two verification identities enforced across all physics modules.",
+   "visual_intent": "Two main horizontal ladders (upper two-thirds) above a verification strip (lower third). TOP ROW (forward pass, blue): four rounded state boxes from left to right labelled 'u^0', 'u^n', 'u^{n+1}', 'u^{N_t}', with a small callout above 'u^n' reading 'u^n = (e^n, h^{n+1/2}, ψ^n, p^n, J_L^n)'. Horizontal right-pointing dark grey arrows between boxes labelled 'M(ρ) u^n + s^n'. From the transition between 'u^n' and 'u^{n+1}', a downward blue dashed arrow drops into a green multiplier circle, labelled 'q_e^n = (E_e^{*,n+1} − E_e^n) / ieps_e'. MIDDLE ROW (backward pass, orange): four rounded adjoint boxes aligned vertically beneath the forward boxes, from right to left: 'λ^{N_t} = 0', 'λ^{n+1}', 'λ^n', 'λ^0'. Horizontal left-pointing dark grey arrows between them labelled 'M(ρ)†'. Into 'λ^n' from below enters an orange source arrow labelled '(∂J / ∂u^n)†'. From 'λ^{n+1}' an upward orange dashed arrow labelled 'λ̄_{E,e}^{n+1}' meets 'q_e^n' at the green circle between the two ladders; a green arrow exits to the right to a green box reading '∂J / ∂(ieps_e) = Σ_{n=0}^{N_t−1} Re{ λ̄_{E,e}^{n+1} q_e^n }' with badge '1 forward + 1 adjoint ≈ 2.2× cost'. BOTTOM STRIP (two grey verification cards side by side): Left card titled '1. Dot-product (transpose) identity (AdjointStepper)': equation '⟨y, M_fwd(x)⟩ = ⟨M_adj(y), x⟩' with green badge '< 10⁻¹⁴ relative error'. Right card titled '2. Central finite-difference check (ε = 10⁻⁶)': equation 'd · ∇_ρ J  vs  [J(ρ + ε d) − J(ρ − ε d)] / (2ε)' with green badge '< 10⁻⁸–10⁻¹⁰ relative error'."
+  },
+  {
+   "id": "fig13_2_material_grid_jax_pipeline",
+   "subsection": "13.2",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2371,
+    2373,
+    2381,
+    2382,
+    2383,
+    2384,
+    2385,
+    2386,
+    2387,
+    2394,
+    2397,
+    2398,
+    2399,
+    2404,
+    2406,
+    2418,
+    2420,
+    2422,
+    2423,
+    2424,
+    2426
+   ],
+   "caption": "Figure 13.2: Parameterizing a design region with MaterialGrid and wrapping AdjointSimulation as a differentiable JAX primitive via jax_simulation. Left: MaterialGrid maps pixel densities ρ ∈ [0, 1] between eps_min and eps_max onto the staggered ieps edge midpoints of SolverFIT3D via trilinear interpolation (and maps edge sensitivities back via its exact transpose), with optional symmetry=('x',) and extrude_axis='z'. Right: the end-to-end jax.value_and_grad optimization loop combining conic_filter, tanh_projection, simulate = jax_simulation(sim), and monitor readout.",
+   "visual_intent": "Two panels side by side. LEFT PANEL (45% width) 'MaterialGrid mapping': on the left, a 2D pixel grid shaded in green tones labelled 'ρ ∈ [0, 1]' with tags 'eps_min = 1.0', 'eps_max = 12.0', 'symmetry=(\"x\",)', and 'extrude_axis=\"z\"'. On the right, a 3D wireframe Yee cell of 'SolverFIT3D' in blue with staggered electric-field edge midpoints marked by blue dots labelled 'ieps'. A dark grey forward arrow from the pixel grid to the Yee edge midpoints is labelled 'trilinear edge-midpoint interpolation'; a reverse orange arrow from the edge midpoints back to the pixel grid is labelled 'exact transpose'. RIGHT PANEL (55% width) 'jax_simulation differentiable pipeline': a horizontal forward chain of five rounded boxes (top half) and a reverse gradient chain (bottom half). Top row left to right: green box 'rho_raw' → green box 'conic_filter(rho_raw, radius=2.0)' → green box 'tanh_projection(beta=8.0, eta=0.5)' → blue box 'simulate = jax_simulation(sim)' (with sub-label 'AdjointSimulation + SolverFIT3D') → blue box 'flux(out[\"out\"], sim.readouts[\"out\"])' (with sub-label 'FluxMonitor'). Bottom return path (orange arrows right to left): from objective 'J' back through 'AdjointSimulation backward pass', 'MaterialGridᵀ', and 'JAX VJP' to 'grad_rho', enclosed in a dashed dark grey frame labelled 'val, grad_rho = jax.value_and_grad(objective)(rho_raw)' with compatibility tags 'Optax' and 'L-BFGS-B'."
+  },
+  {
+   "id": "fig13_3_adjoint_memory_ladder",
+   "subsection": "13.3",
+   "aspect_ratio": "21:9",
+   "route": "generated",
+   "source_lines": [
+    2434,
+    2436,
+    2438,
+    2439,
+    2440,
+    2441,
+    2442,
+    2444
+   ],
+   "caption": "Figure 13.3: The five-rung adjoint memory ladder in AdjointSimulation(..., memory=...). Computing ∂J/∂(ieps_e) requires the forward increments q_e^n at step n. The four storage mechanisms trade memory footprint against recomputation: 'store' keeps the full N_t × N_design trace; 'checkpoint' stores K full-state snapshots and recomputes forward in B-step windows via the Revolve schedule; 'reverse' records only the CPML rim and time-reverses lossless interior dynamics; 'nyquist' subsamples every D-th step and linearly interpolates; 'auto' selects the fastest exact mode that fits within memory_budget_gb.",
+   "visual_intent": "Four equal vertical cards on the left (80% width) showing space (vertical axis 'space: N_cells / N_design') versus time (horizontal axis 'time step n = 0 … N_t'), plus a decision card on the far right (20% width) for 'auto'. Card 1 heading \"'store' (default)\": the entire design-region band across all time steps is filled solid blue, labelled 'O(N_t · N_design)'; bottom badges 'Exact' and '12.3 GB (1.0× time) on 313² × 20,000 steps'. Card 2 heading \"'checkpoint' (Revolve)\": K thin vertical blue bars spanning the full cell height at selected checkpoints and one short blue window of width B in the design region, with curved grey arrows showing forward recomputation from the nearest checkpoint; labelled 'O(K · N_cells + B · N_design)'; bottom badges 'Bitwise identical to store' and '0.2–2.1 GB (1.5–1.9× time)'. Card 3 heading \"'reverse' (lossless)\": only a thin orange border along the top and bottom edges of the spacetime rectangle is shaded, labelled 'O(N_t · N_CPML rim): records only the CPML rim', with a left-pointing blue arrow in the interior showing backward time reversal; bottom badges 'Exact to round-off (3×10⁻¹⁶–2×10⁻¹⁵)' and '0.39 GB (1.22× time, 30–60× less memory)'. Card 4 heading \"'nyquist' (decimation=4..10)\": sparse vertical green dashed lines every D steps in the design band connected by straight interpolation segments, labelled 'O((N_t / D) · N_design)'; bottom badges 'Approximate (~10⁻³–10⁻² error)' and 'Subsampled trace + linear interpolation'. Rightmost Card 5 heading \"'auto' + adjoint_plan\": a compact decision tree starting from 'memory_budget_gb (50% free VRAM or 25% free RAM)' → 'fits in budget?' → green arrow 'yes → store', orange arrow 'no → reverse or optimal checkpoint'."
+  },
+  {
+   "id": "fig13_4_subpixel_smoothed_projection",
+   "subsection": "13.4",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2422,
+    2450,
+    2451,
+    2452
+   ],
+   "caption": "Figure 13.4: Subpixel-Smoothed Projection (SSP) for high-beta topology optimization (Hammond et al., Opt. Express 33, 33620, 2025). Left: standard tanh_projection(rho_filt, beta, eta) approaches a step function as β → ∞, whose derivative vanishes everywhere except on a zero-crossing. Centre: smoothed_projection uses the local signed distance d = (η − ρ̃) / ‖∇ρ̃‖ inside the interface band crossing a grid cell of size Δx. Right: as a level set moves through a cell at β = ∞, a step projection jumps discontinuously (giving an exactly zero gradient), whereas smoothed_projection keeps the objective smooth (adjoint gradient matches finite differences to 2×10⁻⁶–10⁻⁴, with sub-pixel derivative modulation reduced from 17× at R = 0.55 Δx to 1.6× at R = 0.75 Δx).",
+   "visual_intent": "SCRIPTED PLOTTING RECIPE (matplotlib, three panels side by side, 16:9): PANEL 1 (left, 32% width) 'Standard tanh_projection': plot ρ̃ ∈ [0, 1] on the horizontal axis and tanh_projection(rho_filt, beta, eta) on the vertical axis for eta = 0.5 at finite sharpness beta = 8.0 (solid blue) versus the β → ∞ step projection limit (red). In a small lower sub-axes sharing the horizontal axis, plot the derivative wrt ρ̃ showing the red β → ∞ curve flat at zero everywhere except at ρ̃ = η, annotated in red 'β → ∞: step projection has an exactly zero gradient'. PANEL 2 (centre, 32% width) 'Signed distance d in a cell': draw one square grid cell of width labelled 'Δx' (blue outline) split by a tilted level-set line labelled 'ρ̃ = η' (dark grey). Draw a normal vector from the cell centre to the level set labelled 'd = (η − ρ̃) / ‖∇ρ̃‖' and shade the interface band in light green labelled 'smoothed_projection interface band'. PANEL 3 (right, 36% width) 'Level set moving through a cell at β = ∞': as a 1D level set ρ̃(x) = η moves across a cell of width Δx, plot (top sub-panel) the unsmoothed β = ∞ step projection in red (discontinuous step jump across the cell) versus the subpixel-blended smoothed_projection cell value in green (smooth transition across the cell), and (bottom sub-panel) the shape-derivative modulation across sub-pixel position for filter radius 'R = 0.55 Δx: 17× modulation' (orange curve) versus 'R = 0.75 Δx: 1.6× modulation' (green curve), with green badge 'adjoint matches FD to 2×10⁻⁶–10⁻⁴'."
+  }
+ ]
+}

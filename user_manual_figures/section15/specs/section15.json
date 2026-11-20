@@ -1,0 +1,71 @@
+{
+ "section": "section15",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: Wakis solver arms and primary field/mesh items in blue, excitation sources and sampling circles in orange, exact analytical references and PEC boundaries in dark grey, dielectric/dispersive materials and target accuracy thresholds in green, unresolved or high-error items in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig15_1_benchmark_suite_b1_b5",
+   "subsection": "15.1-15.2",
+   "aspect_ratio": "21:9",
+   "route": "generated",
+   "source_lines": [
+    2580,
+    2585,
+    2586,
+    2590,
+    2596,
+    2600,
+    2601,
+    2602,
+    2603,
+    2604,
+    2605
+   ],
+   "caption": "Figure 15.1: The five standardized multi-physics benchmark families B1–B5 in wakis.benchmarks paired with their built-in analytical reference solvers in wakis.analytic: (B1) 2D dielectric cylinder (n = 2.0, a = 1 μm), (B2) 2D Rakić Lorentz–Drude Au and Ag plasmonic nanocylinders (a = 20 nm) across the LSPR peak, (B3) coupled Au nanocylinder dimer with sub-nanometre to 10 nm gap (g = 2, 5, 10 nm), (B4) 3D centre-fed half-wave thin-wire PEC dipole (L = 0.15 m, a = L/200, 50 Ω LumpedPort), and (B5) 2D PEC circular cylinder (a = 1 μm).",
+   "visual_intent": "A row of five equal cards from left to right, titled B1 through B5 in bold badges, each showing the physical geometry in the upper half, the regime and analytical reference in the middle, and the pre-registered accuracy targets in a green footer box. Card 1 'B1-TM, B1-TE': a green circle labelled 'n = 2.0, a = 1 μm' in vacuum impinged by an orange plane-wave arrow; middle text 'x = ka ∈ [2, 10] (31 freqs)' and grey badge 'ref: wakis.analytic.mie_cylinder'; green footer 'RMS Q_sca error ≤ 5%, 2%, 1%'. Card 2 'B2-Au-TE/TM, B2-Ag-TE': a small metallic circle labelled 'Au / Ag, a = 20 nm (Rakić Lorentz–Drude)' inside host 'n = 2.0 (Au) or vacuum (Ag)' with surface plasmon field loops; middle text 'λ ∈ [450, 900] nm (Au) / [300, 500] nm (Ag)' and grey badge 'ref: mie_cylinder'; green footer 'RMS Q_ext ≤ 5%, 2%, 1%; Δλ_LSPR ≤ 2 nm'. Card 3 'B3-g2-TE, B3-g5-TE, B3-g10-TE': two closely spaced Au circles of radius 'a = 20 nm' separated by a highlighted narrow gap labelled 'g = 2, 5, 10 nm' in 'n = 2.0 host' with orange field arrow 'E ∥ dimer axis' and intense red/orange hotspot in the gap; middle text 'λ ∈ [500, 1000] nm' and grey badge 'ref: CylinderCluster (Graf T-matrix)'; green footer 'RMS Q_ext ≤ 5%, 2%; gap |E/E_0|² ≤ 10%, 5%'. Card 4 'B4': a vertical 3D thin PEC cylinder labelled 'L = 0.15 m, a = L/200' fed at its centre gap by an orange port icon labelled '50 Ω LumpedPort'; middle text 'f ∈ [0.7, 1.3] GHz' and grey badge 'ref: hallen_impedance'; green footer 'f_res, R_res, Z(f) RMS vs. Hallén IE'. Card 5 'B5-TM, B5-TE': a dark grey hatched PEC circle labelled 'PEC, a = 1 μm' in vacuum with scattered wavefront arcs; middle text 'x = ka ∈ [0.5, 10]' and grey badge 'ref: mie_cylinder'; green footer 'RMS Q_sca error ≤ 5%, 2%, 1%'."
+  },
+  {
+   "id": "fig15_2_cost_to_target",
+   "subsection": "15.2",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2600,
+    2607,
+    2608
+   ],
+   "caption": "Figure 15.2: Why wakis.benchmarks evaluates solvers by cost_to_target rather than at a fixed grid spacing h. Left: three solver arms—unstructured triangles, p = 3 curved DG elements, and a 4-level quadtree—have incompatible definitions of cell size h. Right: each arm runs across a coarse-to-fine resolution ladder, and cost_to_target(records, metric='q_sca_rms_rel', target=0.02) interpolates log-linearly along the convergence curve on log–log axes to report the minimum unknowns, work = unknowns * steps, and run_s needed to reach the pre-registered target thresholds (5%, 2%, 1%).",
+   "visual_intent": "SCRIPTED PLOTTING RECIPE (matplotlib, two panels side by side, 16:9): LEFT PANEL (36% width) 'Why fixed h is meaningless': stack three small square mesh patches around a curved circular arc (grey): (1) 'triangles' (Delaunay triangle patch), (2) 'p = 3 curved DG elements' (coarse curved triangles with high-order interior nodes), and (3) '4-level quadtree' (nested Cartesian subgrid cells near the arc), joined by a red cross badge 'different DOFs per h → compare by cost at target error'. RIGHT PANEL (64% width) 'Log-linear interpolation in cost_to_target': draw a schematic log–log plot (no numeric tick values on the horizontal cost axis; horizontal axis labelled 'cost: unknowns, work = unknowns * steps, or run_s (log scale)', vertical axis labelled 'relative error q_sca_rms_rel (log scale)' with three horizontal green dashed threshold lines at the exact manual targets '5% (0.05)', '2% (0.02)', and '1% (0.01)'). Plot two exact power-law convergence ladders y = C x^{-α} (schematic second-order slope α = 1 in blue and high-order slope α = 2 in orange) sampled at 4 discrete resolution-ladder markers ('coarse → fine resolution ladder'). Highlight the two bracketing markers (x_k, E_k) above 0.02 and (x_{k+1}, E_{k+1}) below 0.02 on the blue curve, draw the exact straight log-linear segment connecting (log10 x_k, log10 E_k) to (log10 x_{k+1}, log10 E_{k+1}), mark its intersection with the horizontal line 'target = 0.02 (2%)' with a large green circle, and drop a vertical green arrow to the horizontal axis labelled 'cost_to_target(records, \"q_sca_rms_rel\", 0.02)'."
+  },
+  {
+   "id": "fig15_3_benchmark_arm_workflow",
+   "subsection": "15.3",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2614,
+    2617,
+    2618,
+    2627,
+    2629,
+    2631,
+    2632,
+    2633,
+    2634,
+    2637,
+    2638,
+    2639,
+    2640,
+    2641,
+    2642,
+    2643,
+    2644,
+    2652,
+    2654,
+    2656
+   ],
+   "caption": "Figure 15.3: Protocol for adding and benchmarking a solver arm with wakis.benchmarks.Arm. Subclassing Arm requires three methods—supports(case), resolutions(case), and run(case, h)—which build the mesh for case.cylinders and case.materials, advance the time-domain pulse for case.t_run, sample scattered DFT phasors on concentric case.circles (via circle_points), and return samples, u0, and cost for save_record and cost_to_target.",
+   "visual_intent": "A left-to-right workflow diagram with a geometric inset. LEFT COLUMN (blue class card 'class MyCustomArm(Arm)'): three method blocks stacked vertically: (1) 'supports(case)' → 'B1-TM, B1-TE, B2-Au-TE', (2) 'resolutions(case)' → 'coarse-to-fine h: [0.10e-6, 0.07e-6, 0.05e-6, 0.035e-6]', (3) 'run(case, h)' expanding rightward into CENTRE PANEL. CENTRE PANEL 'Inside run(case, h)': a 2D circular scatterer ('case.cylinders & case.materials' in green) surrounded by concentric dashed orange sampling rings labelled 'case.circles (circle_points: case.n_points)' and a central origin marker labelled 'incident phasor u0 at origin: shape (n_freq,)', with a time-stepping badge 'run pulse for case.t_run'. RIGHT COLUMN (outputs and aggregation): an arrow exits CENTRE PANEL into a dark grey dictionary box showing the three returned keys: 'samples: (n_freq, len(case.circles), case.n_points)', 'u0: (n_freq,)', and 'cost: {unknowns, steps, dt, run_s, setup_s}'. Below that box, a downward arrow leads to 'save_record(rec, ...)' and finally to a green box 'cost_to_target(records, \"q_sca_rms_rel\", 0.02)'."
+  }
+ ]
+}

@@ -1,0 +1,66 @@
+{
+ "section": "section12",
+ "manual": "user_manual.md",
+ "style": "Textbook-quality scientific schematic for a computational electromagnetics user manual. Flat vector style on a white background, high contrast, thin dark outlines, generous whitespace, sans-serif labels. Colour code used in every figure: primary grid G, interior domains, and fused GPU items in blue; dual grid G-tilde, ghost halos, and standard CuPy items in orange; exact/topological/CPU baseline items in dark grey; high-utilization/speedup items in green; launch-overhead bottlenecks or idle gaps in red. Colourblind-safe. Every label must be spelled exactly as listed in this brief; mathematical symbols must be typeset correctly (hats, tildes, subscripts, transposes). Do not add any number, value, equation, software name, product name, logo, watermark or title that is not listed in this brief. Prefer fewer, larger labels over many small ones. No 3D photorealism, no cartoon characters, no hand-drawn or xkcd style.",
+ "figures": [
+  {
+   "id": "fig12_1_gpu_fused_architecture",
+   "subsection": "12.1",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2274,
+    2278,
+    2279,
+    2280,
+    2281,
+    2282,
+    2287,
+    2288,
+    2297,
+    2298
+   ],
+   "caption": "Figure 12.1: Upstream CuPy sparse mode (use_gpu=True, fused=False) versus matrix-free fused CUDA kernels and CUDA Graphs (use_gpu=True, fused=True). Top: with CPML, TF/SF, dispersive ADE, tensor averaging, and monitors active, Python dispatch launches up to ~500 small CuPy kernels per step, leaving the GPU at ~11% utilization (7.3 ms/step launch floor on 3D CPML). Bottom: wakis/gpu_fused.py fuses the stencil updates, boundaries, sources, monitors, and transposed adjoint step into custom CUDA RawKernels replayed 64 steps at a time via a FusedLoop CUDA Graph, raising GPU utilization to 93% (45–49× speedup on the invrs full ceviche waveguide bend).",
+   "visual_intent": "Two horizontal execution-pipeline strips stacked vertically. TOP STRIP headed in red/orange '1. Upstream CuPy Sparse Mode (use_gpu=True, fused=False)': On the left, a box 'CSR curl matrices (cupyx.scipy.sparse.csr_matrix) + Python per-step dispatch'. To the right, a GPU timeline bar showing a long train of tiny narrow orange blocks separated by wide red idle gaps, labelled 'up to ~500 small CuPy kernel launches / step (curl, CPML, TF/SF, ADE, tensor, monitors)'. On the far right, a red summary badge: '~11% GPU utilization, 7.3 ms/step launch floor on 3D CPML; invrs bend fwd+adj: 753 s'. BOTTOM STRIP headed in blue/green '2. Matrix-Free Fused CUDA Kernels + CUDA Graphs (use_gpu=True, fused=True, wakis/gpu_fused.py)': On the left, a blue box listing the fused modules: 'leapfrog step + CPML + sources + DFT/flux/mode monitors + TF/SF + tensor averaging + dispersive ADE + exact transposed adjoint'. In the centre, a wide green bracket labelled 'FusedLoop CUDA Graph: replayed 64 steps at a time' enclosing tightly packed solid blue kernel blocks ('custom CUDA RawKernels: zero CSR index traffic, zero Python launch gap'). On the far right, a green summary badge: '93% GPU utilization; invrs bend fwd+adj: 15–17 s (45–49× speedup); matches CuPy to ≤ 10⁻¹¹, adjoint dot-product < 10⁻¹²'."
+  },
+  {
+   "id": "fig12_2_gpu_throughput_and_timings",
+   "subsection": "12.1",
+   "aspect_ratio": "16:9",
+   "route": "scripted",
+   "source_lines": [
+    2279,
+    2282,
+    2283,
+    2284,
+    2285,
+    2286,
+    2288,
+    2304,
+    2306,
+    2308,
+    2309,
+    2310,
+    2311
+   ],
+   "caption": "Figure 12.2: Measured per-step kernel timings and sustained throughput on Xeon 2.2 GHz CPU versus NVIDIA L4 GPU in float64 (wakis/estimate.py and studies/gpu-perf). Left: per-step execution times on NVIDIA L4 drop by 10.7× for a 3D CPML step (7.3 → 0.68 ms), 18.6× for a TF/SF + 81-frequency flux monitor step (11.7 → 0.63 ms), and 60× for an adjoint backward step (6.0 → 0.10 ms). Right: sustained throughput (Mcells/s) across 65³ PEC, 65³ CPML, and 129³ PEC workloads.",
+   "visual_intent": "PLOT RECIPE (deterministic Matplotlib script): Two panels side by side (46% left, 54% right) plotting ONLY the exact measured numbers from Section 12.1 (lines 2283-2311). LEFT PANEL 'Per-step kernel timings on NVIDIA L4 [ms] (lower is better)': Horizontal grouped bar chart for the 3 workloads in lines 2284-2286 comparing orange 'GPU CuPy (fused=False)' vs blue 'GPU Fused (fused=True)': (1) '3D CPML step': 7.3 ms vs 0.68 ms (annotate '10.7× faster'); (2) 'TF/SF + 81-freq flux monitor step': 11.7 ms vs 0.63 ms (annotate '18.6× faster'); (3) 'Adjoint backward step': 6.0 ms vs 0.10 ms (annotate '60× faster'). RIGHT PANEL 'Measured Sustained Throughput [Mcells/s] (float64, higher is better)': Grouped vertical bar chart for the 3 grid rows in lines 2308-2310 across the 4 backends: light-grey 'CPU (scipy, 1 core)', dark-grey 'CPU (sparse_dot_mkl, 8 cores)', orange 'GPU CuPy (use_gpu=True)', and blue 'GPU Fused (use_gpu=True, fused=True)': Group 1 '65³ (PEC walls, 0.275 M)': [19.4, 29.6, 738, 610] Mcells/s with label '31× vs 1-core CPU (bandwidth-bound PEC)'; Group 2 '65³ (CPML walls, 0.275 M)': [7.1, 7.1, 38.7, 404] Mcells/s with green badge '57× vs CPU, 10.7× vs CuPy'; Group 3 '129³ (PEC walls, 2.15 M)': [14.7, 17.1, 333, 468] Mcells/s with label '32× vs CPU, 1.4× vs CuPy'. Print exact bar values above each bar."
+  },
+  {
+   "id": "fig12_3_mpi_domain_decomposition",
+   "subsection": "12.2",
+   "aspect_ratio": "16:9",
+   "route": "generated",
+   "source_lines": [
+    2314,
+    2316,
+    2317,
+    2318,
+    2319,
+    2322
+   ],
+   "caption": "Figure 12.3: Longitudinal z-slab MPI domain decomposition (use_mpi=True) and multi-GPU binding. A 3D grid of length N_z is split along z across size MPI ranks (mpiexec -n 4); each rank owns N_z / size interior cells plus a 1-cell ghost halo at its lower and upper z interfaces, exchanged at every half-step via SolverFIT3D.mpi_communicate(). When combined with use_gpu=True, each rank binds to rank % n_gpus via CuPy for both forward time-stepping and multi-rank MPI discrete adjoints (AdjointSimulation).",
+   "visual_intent": "Wide schematic of a 3D beam-pipe / accelerator structure extending along the horizontal axis 'z (total length N_z cells)', partitioned by vertical dashed planes into four contiguous longitudinal slabs ('size = 4 ranks: mpiexec -n 4 python my_simulation.py'). Colour the interior of each slab in blue, labelled 'rank 0', 'rank 1', 'rank 2', 'rank 3', each with width label 'N_z / size interior cells'. At every interior boundary between adjacent slabs (between rank 0 & 1, rank 1 & 2, rank 2 & 3), draw thin overlapping orange strips on both sides labelled '1-cell ghost halo (lower & upper z interfaces)', connected by bidirectional curved orange arrows labelled 'SolverFIT3D.mpi_communicate() every half-step'. Below each rank slab, draw a green GPU card icon connected to that rank, labelled 'CuPy device: rank % n_gpus (use_mpi=True, use_gpu=True)'. At the bottom, draw a two-way horizontal bar spanning all four ranks labelled 'Supports multi-GPU forward time-stepping and multi-rank MPI discrete adjoints (AdjointSimulation with DFTMonitor & FluxMonitor)'."
+  }
+ ]
+}
