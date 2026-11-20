@@ -29,7 +29,7 @@ from matplotlib.patches import (
     Rectangle,
 )  # noqa: E402
 
-from wakis import GridFIT3D  # noqa: E402
+from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
 ORANGE, LORANGE = "#e8873a", "#fbe0c8"
@@ -544,7 +544,403 @@ def fig5_3(outroot):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 6.1
+def fig6_1(outroot):
+    """Figure 6.1: Domain-edge boundary alignment in GridFIT3D (legacy vs boundary_at_domain_edge=True)."""
+    out_dir = outroot / "section6"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    N = 5
+    dx = 1.0
+    g_leg = GridFIT3D(
+        0.0,
+        N * dx,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        N,
+        2,
+        2,
+        boundary_at_domain_edge=False,
+        verbose=0,
+    )
+    g_edge = GridFIT3D(
+        0.0,
+        N * dx,
+        0.0,
+        1.0,
+        0.0,
+        1.0,
+        N,
+        2,
+        2,
+        boundary_at_domain_edge=True,
+        verbose=0,
+    )
+    s_leg = SolverFIT3D(
+        g_leg, bc_low=["pec"] * 3, bc_high=["pmc", "pec", "pec"], verbose=0
+    )
+    s_edge = SolverFIT3D(
+        g_edge, bc_low=["pec"] * 3, bc_high=["pmc", "pec", "pec"], verbose=0
+    )
+
+    # Asserts checking user_manual.md lines 1100-1103:
+    assert s_leg.Nx == N and s_edge.Nx == N + 1
+    tl_edge = g_edge.tL[:, 0, 0, "x"]
+    assert np.isclose(tl_edge[0], 0.5 * dx) and np.isclose(tl_edge[N], 0.5 * dx)
+    assert np.allclose(tl_edge[1:N], dx)
+    assert np.all(s_edge.imu[N, :, :, "y"] == 0.0) and np.all(
+        s_edge.imu[N, :, :, "z"] == 0.0
+    )
+    # Effective cavity length (N-1)dx vs Ndx gives O(dx/L) ~ 5% frequency shift for Nx=20 (lines 1091, 1100)
+    n_ex = 20
+    freq_shift_20 = n_ex / (n_ex - 1) - 1.0
+    assert np.isclose(freq_shift_20, 1.0 / 19.0)
+
+    fig = plt.figure(figsize=(W, H))
+
+    node_labels = [
+        r"$x_0 = x_{\min}$",
+        r"$x_1$",
+        r"$x_2$",
+        r"$x_3$",
+        r"$x_{N-1}$",
+        r"$x_N = x_{\max}$",
+    ]
+    mid_labels = [
+        r"$x_{1/2}$",
+        r"$x_{3/2}$",
+        r"$x_{5/2}$",
+        r"$x_{N-3/2}$",
+        r"$x_{N-1/2}$",
+    ]
+
+    # ---- TOP PANEL: Legacy mode (boundary_at_domain_edge=False) ----
+    ax = fig.add_axes([0.03, 0.52, 0.94, 0.45])
+    bare(ax)
+    ax.text(
+        3.0,
+        1.52,
+        "Legacy mode: boundary_at_domain_edge=False  (Nx = N)",
+        ha="center",
+        va="center",
+        fontsize=16,
+        weight="bold",
+        color="black",
+    )
+
+    y_lo, y_hi = 0.0, 0.72
+    ym = 0.5 * (y_lo + y_hi)
+    # Effective cavity [0, N-1] shaded light blue; last cell [N-1, N] shaded faded red
+    ax.add_patch(
+        Rectangle(
+            (0.0, y_lo), N - 1, y_hi - y_lo, fc=LBLUE, ec="none", alpha=0.45, zorder=1
+        )
+    )
+    ax.add_patch(
+        Rectangle(
+            (N - 1, y_lo), 1.0, y_hi - y_lo, fc=LRED, ec="none", alpha=0.35, zorder=1
+        )
+    )
+    ax.plot([0.0, N], [y_lo, y_lo], color=BLUE, lw=1.8, zorder=2)
+    ax.plot([0.0, N], [y_hi, y_hi], color=BLUE, lw=1.8, zorder=2)
+
+    # Primary nodes x_0 .. x_N
+    for i in range(N + 1):
+        xv = float(i)
+        ax.plot([xv, xv], [y_lo - 0.06, y_hi + 0.06], color=BLUE, lw=2.0, zorder=3)
+        x_txt = xv + (0.08 if i == N else (-0.06 if i == 0 else 0.0))
+        ax.text(
+            x_txt,
+            y_lo - 0.14,
+            node_labels[i],
+            ha="center",
+            va="top",
+            fontsize=13.0,
+            color=BLUE,
+        )
+
+    # Dual midpoints x_{1/2} .. x_{N-1/2} and tangential H samples (orange squares)
+    sq = 0.11
+    for i in range(N):
+        xm = i + 0.5
+        ax.plot(
+            [xm, xm],
+            [y_lo - 0.04, y_hi + 0.04],
+            color=ORANGE,
+            lw=1.6,
+            ls="--",
+            zorder=2,
+        )
+        ax.add_patch(
+            Rectangle((xm - sq / 2, ym - sq / 2), sq, sq, color=ORANGE, zorder=5)
+        )
+        ax.text(
+            xm - (0.04 if i == N - 1 else 0.0),
+            y_lo - 0.14,
+            mid_labels[i],
+            ha="center",
+            va="top",
+            fontsize=12.0,
+            color=ORANGE,
+        )
+
+    # Stored tangential E samples at x_0 .. x_{N-1} (filled blue circles)
+    for i in range(N):
+        ax.add_patch(Circle((float(i), ym), 0.068, color=BLUE, zorder=5))
+
+    # Open red circle with a cross at x_N = x_max
+    ax.add_patch(Circle((float(N), ym), 0.085, fc="white", ec=RED, lw=2.4, zorder=6))
+    d_cr = 0.058
+    ax.plot([N - d_cr, N + d_cr], [ym - d_cr, ym + d_cr], color=RED, lw=2.4, zorder=7)
+    ax.plot([N - d_cr, N + d_cr], [ym + d_cr, ym - d_cr], color=RED, lw=2.4, zorder=7)
+    ax.text(
+        N + 0.22,
+        ym + 0.05,
+        r"no $\mathbf{E}$ sample stored" + "\n" + r"at $x_N = x_{\max}$",
+        ha="left",
+        va="center",
+        fontsize=12.5,
+        color=RED,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LRED, ec=RED, lw=1.2),
+        zorder=7,
+    )
+
+    # Red vertical wall at x_{N-1} = x_max - dx
+    ax.plot([N - 1, N - 1], [y_lo - 0.05, y_hi + 0.15], color=RED, lw=4.5, zorder=4)
+    ax.text(
+        2.15,
+        y_hi + 0.34,
+        r"high PEC wall at $x_{N-1}$: effective length $(N-1)\Delta x$,  $O(\Delta x/L) \sim 5\%$ frequency shift",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=RED,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LRED, ec=RED, lw=1.2),
+        zorder=7,
+    )
+    arrow(ax, (3.45, y_hi + 0.20), (N - 1 - 0.04, y_hi + 0.06), RED, lw=1.8, ms=15, z=6)
+
+    # Second red marker at x_{N-1/2} for high PMC wall
+    ax.plot(
+        [N - 0.5, N - 0.5],
+        [y_lo - 0.05, y_hi + 0.12],
+        color=RED,
+        lw=3.0,
+        ls=":",
+        zorder=4,
+    )
+    ax.text(
+        4.35,
+        -0.54,
+        r"high PMC wall zeros $\mathbf{H}$ at $x_{N-1/2}$ (shifted by $\Delta x/2$)",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=RED,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LRED, ec=RED, lw=1.2),
+        zorder=7,
+    )
+    arrow(ax, (4.50, -0.36), (N - 0.5, y_lo - 0.30), RED, lw=1.8, ms=14, z=6)
+
+    # Legend items in bottom-left of top panel (clear of title and nodes)
+    ax.plot([], [], "o", color=BLUE, ms=8, label=r"stored tangential $\mathbf{E}$")
+    ax.plot([], [], "s", color=ORANGE, ms=8, label=r"stored tangential $\mathbf{H}$")
+    ax.legend(
+        loc="lower left",
+        frameon=False,
+        fontsize=12.0,
+        ncol=2,
+        columnspacing=1.0,
+        bbox_to_anchor=(0.01, -0.02),
+    )
+
+    ax.set_xlim(-0.45, 6.75)
+    ax.set_ylim(-0.78, 1.72)
+
+    # Horizontal divider
+    fig.add_artist(
+        plt.Line2D(
+            [0.04, 0.96], [0.50, 0.50], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+
+    # ---- BOTTOM PANEL: Exact Domain-Edge Mode (boundary_at_domain_edge=True) ----
+    ax = fig.add_axes([0.03, 0.03, 0.94, 0.45])
+    bare(ax)
+    ax.text(
+        3.0,
+        1.52,
+        "Exact Domain-Edge Mode: boundary_at_domain_edge=True (default, solver.Nx = Nx + 1)",
+        ha="center",
+        va="center",
+        fontsize=16,
+        weight="bold",
+        color="black",
+    )
+
+    # Primary domain [0, N] shaded light blue
+    ax.add_patch(
+        Rectangle(
+            (0.0, y_lo), N, y_hi - y_lo, fc=LBLUE, ec="none", alpha=0.45, zorder=1
+        )
+    )
+    # Highlight truncated boundary dual cell A~_k in [N - 0.5, N] in light orange
+    ax.add_patch(
+        Rectangle(
+            (N - 0.5, y_lo + 0.04),
+            0.5,
+            y_hi - y_lo - 0.08,
+            fc=LORANGE,
+            ec=ORANGE,
+            lw=1.8,
+            zorder=2,
+        )
+    )
+    ax.text(
+        N - 0.25,
+        y_hi - 0.13,
+        r"$\tilde{A}_k$",
+        ha="center",
+        va="center",
+        fontsize=13.5,
+        color=ORANGE,
+        weight="bold",
+        zorder=6,
+    )
+
+    # Ghost cell [N, N + 1.35] beyond x_max shaded light grey with dashed border
+    gw = 1.35
+    ax.add_patch(
+        Rectangle(
+            (float(N), y_lo),
+            gw,
+            y_hi - y_lo,
+            fc=LGREY,
+            ec=GREY,
+            lw=1.8,
+            ls="--",
+            alpha=0.85,
+            zorder=1,
+        )
+    )
+    ax.text(
+        N + 0.54 * gw,
+        ym,
+        "ghost layer\noutside domain:\n" + r"$\mu^{-1} = 0$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREY,
+        weight="bold",
+        zorder=5,
+    )
+    ax.text(
+        N + gw,
+        y_lo - 0.14,
+        r"$x_N + \Delta x$",
+        ha="center",
+        va="top",
+        fontsize=12.5,
+        color=GREY,
+    )
+
+    ax.plot([0.0, N], [y_lo, y_lo], color=BLUE, lw=1.8, zorder=2)
+    ax.plot([0.0, N], [y_hi, y_hi], color=BLUE, lw=1.8, zorder=2)
+
+    # Primary nodes x_0 .. x_N
+    for i in range(N + 1):
+        xv = float(i)
+        ax.plot([xv, xv], [y_lo - 0.06, y_hi + 0.06], color=BLUE, lw=2.0, zorder=3)
+        x_txt = xv + (0.08 if i == N else (-0.06 if i == 0 else 0.0))
+        ax.text(
+            x_txt,
+            y_lo - 0.14,
+            node_labels[i],
+            ha="center",
+            va="top",
+            fontsize=13.0,
+            color=BLUE,
+        )
+
+    # Dual midpoints x_{1/2} .. x_{N-1/2} and tangential H samples (orange squares)
+    for i in range(N):
+        xm = i + 0.5
+        ax.plot(
+            [xm, xm],
+            [y_lo - 0.04, y_hi + 0.04],
+            color=ORANGE,
+            lw=1.6,
+            ls="--",
+            zorder=2,
+        )
+        ax.add_patch(
+            Rectangle((xm - sq / 2, ym - sq / 2), sq, sq, color=ORANGE, zorder=5)
+        )
+        ax.text(
+            xm - (0.04 if i == N - 1 else 0.0),
+            y_lo - 0.14,
+            mid_labels[i],
+            ha="center",
+            va="top",
+            fontsize=12.0,
+            color=ORANGE,
+        )
+
+    # Thick green boundary bars at x_0 = x_min and x_N = x_max
+    for xv in (0.0, float(N)):
+        ax.plot([xv, xv], [y_lo - 0.08, y_hi + 0.14], color=GREEN, lw=5.5, zorder=4)
+
+    # Stored tangential E samples at ALL N + 1 nodes x_0 .. x_N
+    for i in range(N + 1):
+        ax.add_patch(Circle((float(i), ym), 0.068, color=BLUE, zorder=6))
+
+    # Two green callouts (lines 1102-1103)
+    ax.text(
+        1.75,
+        y_hi + 0.34,
+        r"PEC wall: zeros tangential $\mathbf{E}$ on node $0\ (x_{\min})$ and node $N\ (x_{\max})$",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color="black",
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.5),
+        zorder=7,
+    )
+    arrow(ax, (0.55, y_hi + 0.20), (0.04, y_hi + 0.08), GREEN, lw=1.8, ms=15, z=6)
+    arrow(ax, (3.25, y_hi + 0.20), (N - 0.04, y_hi + 0.08), GREEN, lw=1.8, ms=15, z=6)
+
+    ax.text(
+        3.00,
+        -0.52,
+        r"PMC wall: dual face $\tilde{A}_k$ truncated at $x_{\max}$ + ghost $\mu^{-1} = 0$"
+        + r"  $\Rightarrow$  $\hat{\mathbf{n}}\times\mathbf{H} = \mathbf{0}$ on $x_{\max}$ to $O(\Delta x^2)$",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color="black",
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.5),
+        zorder=7,
+    )
+    arrow(
+        ax, (4.72, -0.35), (N - 0.25, y_lo + 0.02), GREEN, lw=1.8, ms=15, z=6, rad=0.18
+    )
+
+    ax.set_xlim(-0.45, 6.65)
+    ax.set_ylim(-0.75, 1.72)
+
+    fig.savefig(out_dir / "fig6_1_domain_edge_boundaries.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
     fig5_3(outroot)
+    fig6_1(outroot)
