@@ -155,6 +155,16 @@ class UnstructuredFIT3D:
         With ``hodge="voronoi"``, faces whose dual edge length is negative
         make K indefinite so time stepping diverges at any ``dt``; by default
         ``False`` raises ``ValueError``, whereas ``True`` emits a warning.
+    lts : int or dict, optional
+        Local time stepping configuration (`wakis.unstructured.lts3d.setup_lts`).
+        An integer ``p`` enables multi-level LTS with ratio ``p`` and automatic
+        coarse time step; a dict configures ``p``, ``ratios``, ``dt``, ``nu``,
+        ``indicator``, ``edge_level``, ``grow``, ``rtol``, ``max_iter``.
+    stability : bool, optional
+        If ``True`` (default), compute ``lambda_max`` and ``dt_max`` in the
+        constructor. Set ``False`` in eigenmode-only loops to skip the
+        Lanczos stability solve (leaves ``lambda_max``, ``dt_max`` and
+        ``courant`` as ``nan``).
 
     Attributes
     ----------
@@ -162,6 +172,10 @@ class UnstructuredFIT3D:
         Edge voltages [V] (line integrals of E along the oriented edges).
     b : ndarray (n_faces,)
         Face fluxes [Wb].
+    lts : TetLTS or None
+        Local time-stepping operator when ``lts`` is enabled, else ``None``.
+    lts_info : dict or None
+        Setup diagnostics for LTS when enabled, else ``None``.
     """
 
     def __init__(
@@ -175,6 +189,8 @@ class UnstructuredFIT3D:
         cfl=0.95,
         pml=None,
         allow_negative_faces=False,
+        lts=None,
+        stability=True,
     ):
         if mesh.dim != 3:
             raise ValueError("UnstructuredFIT3D needs a tetrahedral mesh")
@@ -253,47 +269,63 @@ class UnstructuredFIT3D:
             self.Mnu = M2.tocsr()
             M1f = M1[self.free][:, self.free].tocsc()
             self.M1 = M1f
-            self._M1 = splu(M1f)
+            self._M1 = splu(M1f) if stability else None
             self.cap = M1f.diagonal()
         self.cond = cond[self.free]
 
         # Stability limit
         Kf = (self.Cf.T @ self.Mnu @ self.Cf).tocsr()
         self.K = Kf
-        if hodge == "voronoi":
-            if self.massless.size:
-                Ksf = (self.Cs.T @ self.Mnu @ self.Cf).tocsr()
-                self._Ksf = Ksf
-                minv = 1 / np.sqrt(self.cap)
+        if stability:
+            if hodge == "voronoi":
+                if self.massless.size:
+                    Ksf = (self.Cs.T @ self.Mnu @ self.Cf).tocsr()
+                    self._Ksf = Ksf
+                    minv = 1 / np.sqrt(self.cap)
 
-                def mv(x):
-                    y = minv * x
-                    return minv * (Kf @ y - Ksf.T @ self._Kss.solve(Ksf @ y))
+                    def mv(x):
+                        y = minv * x
+                        return minv * (Kf @ y - Ksf.T @ self._Kss.solve(Ksf @ y))
 
-                n = self.free.size
-                op = LinearOperator((n, n), matvec=mv, dtype=float)
-                # Seeded Lanczos start (as in _core.max_eigenvalue): identical builds get identical dt.
-                v0 = np.random.default_rng(0).standard_normal(n)
-                lam = eigsh(
-                    op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0
-                )[0]
+                    n = self.free.size
+                    op = LinearOperator((n, n), matvec=mv, dtype=float)
+                    # Seeded Lanczos start (as in _core.max_eigenvalue): identical builds get identical dt.
+                    v0 = np.random.default_rng(0).standard_normal(n)
+                    lam = eigsh(
+                        op, k=1, which="LA", return_eigenvectors=False, tol=1e-4, v0=v0
+                    )[0]
+                else:
+                    lam = max_eigenvalue(Kf, M_inv_sqrt=1 / np.sqrt(self.cap))
             else:
-                lam = max_eigenvalue(Kf, M_inv_sqrt=1 / np.sqrt(self.cap))
+                lam = max_eigenvalue(Kf, M_solve=self._M1.solve)
+            self.lambda_max = lam
+            self.dt_max = 2 / np.sqrt(lam)
+            self.dt = cfl * self.dt_max if dt is None else float(dt)
+            self.courant = self.dt * np.sqrt(lam) / 2
         else:
-            lam = max_eigenvalue(Kf, M_solve=self._M1.solve)
-        self.lambda_max = lam
-        self.dt_max = 2 / np.sqrt(lam)
-        self.dt = cfl * self.dt_max if dt is None else float(dt)
-        self.courant = self.dt * np.sqrt(lam) / 2
+            if hodge == "voronoi" and self.massless.size:
+                self._Ksf = (self.Cs.T @ self.Mnu @ self.Cf).tocsr()
+            self.lambda_max = np.nan
+            self.dt_max = np.nan
+            self.dt = np.nan if dt is None else float(dt)
+            self.courant = np.nan
         self.h_mean = L.mean()
+
+        from .lts3d import check_pml, setup_lts
+
+        if lts is not None and not stability:
+            # LTS certifies its levels from the stability operators skipped above.
+            raise ValueError("lts requires stability=True")
+        self.lts, self.lts_info = setup_lts(self, lts, dt)
 
         groups = []
         if dispersive:
             if hodge != "voronoi":
                 raise NotImplementedError("dispersive materials need hodge='voronoi'")
-            check_dispersive_stability(
-                [m for m, _ in dispersive], self.dt, self.courant
-            )
+            if stability:
+                check_dispersive_stability(
+                    [m for m, _ in dispersive], self.dt, self.courant
+                )
             for mat, sel in dispersive:
                 c = eps_0 * mesh.dual_measure(sel * live) / L
                 cf = c[self.free]
@@ -310,7 +342,18 @@ class UnstructuredFIT3D:
             from .pml3d import PML3D
 
             self._pml = PML3D(self, pml)
+        check_pml(self.lts, self._pml)
         self.reset()
+
+    @property
+    def ports(self):
+        return getattr(self, "_ports", None)
+
+    @ports.setter
+    def ports(self, value):
+        if value is not None and getattr(self, "lts", None) is not None:
+            raise NotImplementedError("3D LTS does not support lumped ports")
+        self._ports = value
 
     # ------------------------------------------------------------ state
     def reset(self):
@@ -429,25 +472,49 @@ class UnstructuredFIT3D:
 
     # ------------------------------------------------------------ stepping
     def one_step(self):
-        """One leapfrog step: b to n+1/2, then e to n+1 (sources at n+1/2)."""
+        """
+        One leapfrog step: b to n+1/2, then e to n+1 (sources at n+1/2).
+
+        Raises
+        ------
+        ValueError
+            If ``self.dt`` is not a positive finite number (for instance when
+            constructed with ``stability=False`` and ``dt=None``).
+        """
         dt = self.dt
+        if not np.isfinite(dt) or dt <= 0.0:
+            raise ValueError(
+                "one_step requires a positive finite dt (pass dt=... or stability=True)"
+            )
         t_half = (self.n + 0.5) * dt
         src = np.zeros(self.free.size)
         for w, f in self.sources:
             src += w * f(t_half)
         if self._pml is not None:
-            self._pml.step(src)
+            self._pml.step(src, lts=self.lts)
             self.n += 1
             self.recorder.record(self.u, self.n * dt, dt)
             return
-        e_s = self._massless_voltages(self.u) if self.massless.size else None
-        self.b -= dt * (self.Cf @ self.u)
+        if self.lts is not None:
+            if self.ports is not None:
+                raise NotImplementedError("3D LTS does not support lumped ports")
+            if self.hodge == "voronoi" and not isinstance(
+                self._update, CapacitiveUpdate
+            ):
+                raise NotImplementedError(
+                    "3D LTS with hodge='voronoi' requires a CapacitiveUpdate"
+                )
+        z = self.u if self.lts is None else self.lts.apply(self.u)
+        e_s = self._massless_voltages(z) if self.massless.size else None
+        self.b -= dt * (self.Cf @ z)
         if e_s is not None:
             self.b -= dt * (self.Cs @ e_s)
         r = self.Cf.T @ (self.Mnu @ self.b) - src
         if self.hodge == "voronoi":
             self.u = self._update.step(self.u, r)
         else:
+            if self._M1 is None:
+                self._M1 = splu(self.M1)
             self.u = self.u + dt * self._M1.solve(r)
         self.n += 1
         self.recorder.record(self.u, self.n * dt, dt)

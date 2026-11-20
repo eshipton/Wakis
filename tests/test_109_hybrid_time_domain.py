@@ -453,15 +453,16 @@ def test_measure_cartesian_solverfit3d():
 
 def _assert_merged_study_has_n20(data):
     ns = sorted({int(r["N"]) for r in data["table"]})
-    assert ns == [10, 16, 20], f"merged table Ns={ns} != [10, 16, 20]"
-    assert len(data["table"]) == 15
+    assert ns == [10, 16, 20, 24], f"merged table Ns={ns} != [10, 16, 20, 24]"
+    assert len(data["table"]) == 20
     assert "N=20" in data["cartesian_solverfit3d"]
+    assert "N=24" in data["cartesian_solverfit3d"]
 
 
 def test_plot_mixed_study_merge():
     """`load_merged_study` in `studies/hybrid-cart-tet/plot_mixed_study.py`
-    merges `results_mixed_study.json` and `results_mixed_study_N20.json` by key
-    `table` (`N in {10, 16, 20}`), broken by `mutate='drop_extra'`."""
+    merges `results_mixed_study.json` with the N=20 and N=24 result files by key
+    `table` (`N in {10, 16, 20, 24}`), broken by `mutate='drop_extra'`."""
     plot_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
         "studies",
@@ -477,7 +478,7 @@ def test_plot_mixed_study_merge():
 
     mutated = mod.load_merged_study(mutate="drop_extra")
     with pytest.raises(
-        AssertionError, match=r"merged table Ns=\[10, 16\] != \[10, 16, 20\]"
+        AssertionError, match=r"merged table Ns=\[10, 16\] != \[10, 16, 20, 24\]"
     ) as exc_info:
         _assert_merged_study_has_n20(mutated)
     print(f"Observed mutation failure: {exc_info.value}")

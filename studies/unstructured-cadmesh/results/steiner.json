@@ -1,0 +1,5269 @@
+{
+  "git_commit": "68796740c6e3b56231f614d057a483ef3165d931",
+  "command": "studies/unstructured-cadmesh/steiner_study.py --out studies/unstructured-cadmesh/results/steiner.json",
+  "mode": "full",
+  "cpw": 10,
+  "diagnosis_a0": {
+    "gmsh_available": true,
+    "initial_mesh": {
+      "n_tets": 8364,
+      "n_nodes": 1830,
+      "n_faces": 17651,
+      "guard_negative_before": 2,
+      "initial_negative_faces": [
+        {
+          "face_id": 573,
+          "vertices": [
+            70,
+            364,
+            1093
+          ],
+          "tags": [
+            1,
+            1
+          ],
+          "face_locked_edges": [
+            {
+              "edge": [
+                70,
+                364
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.009824747735917079
+            },
+            {
+              "edge": [
+                70,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01789553208570891
+            },
+            {
+              "edge": [
+                364,
+                1093
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.01657936414255815
+            }
+          ],
+          "tet_locked_edges": [
+            {
+              "edge": [
+                69,
+                70
+              ],
+              "locked": true,
+              "location": "rim_circle(z=0.03)",
+              "length_m": 0.009969177132139429
+            },
+            {
+              "edge": [
+                69,
+                364
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.01012617721337949
+            },
+            {
+              "edge": [
+                69,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01139289285375783
+            },
+            {
+              "edge": [
+                70,
+                1075
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.012714906698628963
+            },
+            {
+              "edge": [
+                364,
+                1075
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.017045357841208877
+            },
+            {
+              "edge": [
+                1075,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.018574537485304642
+            }
+          ],
+          "all_face_edges": [
+            {
+              "edge": [
+                70,
+                364
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.009824747735917079
+            },
+            {
+              "edge": [
+                70,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01789553208570891
+            },
+            {
+              "edge": [
+                364,
+                1093
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.01657936414255815
+            }
+          ]
+        },
+        {
+          "face_id": 1250,
+          "vertices": [
+            126,
+            669,
+            1061
+          ],
+          "tags": [
+            1,
+            1
+          ],
+          "face_locked_edges": [
+            {
+              "edge": [
+                126,
+                669
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.008915181025627208
+            },
+            {
+              "edge": [
+                126,
+                1061
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.016524231651707837
+            },
+            {
+              "edge": [
+                669,
+                1061
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.014789211915911031
+            }
+          ],
+          "tet_locked_edges": [
+            {
+              "edge": [
+                125,
+                126
+              ],
+              "locked": true,
+              "location": "rim_circle(z=0.03)",
+              "length_m": 0.00996917713213947
+            },
+            {
+              "edge": [
+                125,
+                669
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.008589977387471569
+            },
+            {
+              "edge": [
+                125,
+                1061
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01111694457905894
+            },
+            {
+              "edge": [
+                126,
+                1094
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.010129000917212784
+            },
+            {
+              "edge": [
+                669,
+                1094
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.014228704361131004
+            },
+            {
+              "edge": [
+                1061,
+                1094
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.014617405614069654
+            }
+          ],
+          "all_face_edges": [
+            {
+              "edge": [
+                126,
+                669
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.008915181025627208
+            },
+            {
+              "edge": [
+                126,
+                1061
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.016524231651707837
+            },
+            {
+              "edge": [
+                669,
+                1061
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.014789211915911031
+            }
+          ]
+        }
+      ],
+      "initial_edge_classes": {
+        "face_locked_edges": {
+          "rim_circle": 0,
+          "cylinder_wall": 2,
+          "plane": 2,
+          "interior_or_mixed": 2
+        },
+        "tet_locked_edges": {
+          "rim_circle": 2,
+          "cylinder_wall": 6,
+          "plane": 2,
+          "interior_or_mixed": 2
+        },
+        "all_face_edges": {
+          "rim_circle": 0,
+          "cylinder_wall": 2,
+          "plane": 2,
+          "interior_or_mixed": 2
+        }
+      }
+    },
+    "P1_test_imp_none": {
+      "wave3_split_project_none": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "guard_negative_before": 2,
+        "guard_negative_after": 2,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "max_all_steiner_dist_to_cad_m": 0.0,
+        "max_steiner_radial_err_m": 0.0,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0,
+            "locked": 24
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 2,
+          "stuck": [
+            573,
+            1250
+          ]
+        },
+        "stuck_faces": [
+          {
+            "face_id": 573,
+            "vertices": [
+              70,
+              364,
+              1093
+            ],
+            "tags": [
+              1,
+              1
+            ],
+            "face_locked_edges": [
+              {
+                "edge": [
+                  70,
+                  364
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.009824747735917079
+              },
+              {
+                "edge": [
+                  70,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01789553208570891
+              },
+              {
+                "edge": [
+                  364,
+                  1093
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.01657936414255815
+              }
+            ],
+            "tet_locked_edges": [
+              {
+                "edge": [
+                  69,
+                  70
+                ],
+                "locked": true,
+                "location": "rim_circle(z=0.03)",
+                "length_m": 0.009969177132139429
+              },
+              {
+                "edge": [
+                  69,
+                  364
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.01012617721337949
+              },
+              {
+                "edge": [
+                  69,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01139289285375783
+              },
+              {
+                "edge": [
+                  70,
+                  1075
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.012714906698628963
+              },
+              {
+                "edge": [
+                  364,
+                  1075
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.017045357841208877
+              },
+              {
+                "edge": [
+                  1075,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.018574537485304642
+              }
+            ],
+            "all_face_edges": [
+              {
+                "edge": [
+                  70,
+                  364
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.009824747735917079
+              },
+              {
+                "edge": [
+                  70,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01789553208570891
+              },
+              {
+                "edge": [
+                  364,
+                  1093
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.01657936414255815
+              }
+            ]
+          },
+          {
+            "face_id": 1250,
+            "vertices": [
+              126,
+              669,
+              1061
+            ],
+            "tags": [
+              1,
+              1
+            ],
+            "face_locked_edges": [
+              {
+                "edge": [
+                  126,
+                  669
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.008915181025627208
+              },
+              {
+                "edge": [
+                  126,
+                  1061
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.016524231651707837
+              },
+              {
+                "edge": [
+                  669,
+                  1061
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.014789211915911031
+              }
+            ],
+            "tet_locked_edges": [
+              {
+                "edge": [
+                  125,
+                  126
+                ],
+                "locked": true,
+                "location": "rim_circle(z=0.03)",
+                "length_m": 0.00996917713213947
+              },
+              {
+                "edge": [
+                  125,
+                  669
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.008589977387471569
+              },
+              {
+                "edge": [
+                  125,
+                  1061
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01111694457905894
+              },
+              {
+                "edge": [
+                  126,
+                  1094
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.010129000917212784
+              },
+              {
+                "edge": [
+                  669,
+                  1094
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.014228704361131004
+              },
+              {
+                "edge": [
+                  1061,
+                  1094
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.014617405614069654
+              }
+            ],
+            "all_face_edges": [
+              {
+                "edge": [
+                  126,
+                  669
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.008915181025627208
+              },
+              {
+                "edge": [
+                  126,
+                  1061
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.016524231651707837
+              },
+              {
+                "edge": [
+                  669,
+                  1061
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.014789211915911031
+              }
+            ]
+          }
+        ],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 2,
+            "plane": 2,
+            "interior_or_mixed": 2
+          },
+          "tet_locked_edges": {
+            "rim_circle": 2,
+            "cylinder_wall": 6,
+            "plane": 2,
+            "interior_or_mixed": 2
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 2,
+            "plane": 2,
+            "interior_or_mixed": 2
+          }
+        },
+        "steiner_nodes_detail": []
+      },
+      "w4_split_project_auto": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "guard_negative_before": 2,
+        "guard_negative_after": 2,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "max_all_steiner_dist_to_cad_m": 0.0,
+        "max_steiner_radial_err_m": 0.0,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 16,
+            "locked": 4
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 2,
+          "stuck": [
+            573,
+            1250
+          ]
+        },
+        "stuck_faces": [
+          {
+            "face_id": 573,
+            "vertices": [
+              70,
+              364,
+              1093
+            ],
+            "tags": [
+              1,
+              1
+            ],
+            "face_locked_edges": [
+              {
+                "edge": [
+                  70,
+                  364
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.009824747735917079
+              },
+              {
+                "edge": [
+                  70,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01789553208570891
+              },
+              {
+                "edge": [
+                  364,
+                  1093
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.01657936414255815
+              }
+            ],
+            "tet_locked_edges": [
+              {
+                "edge": [
+                  69,
+                  70
+                ],
+                "locked": true,
+                "location": "rim_circle(z=0.03)",
+                "length_m": 0.009969177132139429
+              },
+              {
+                "edge": [
+                  69,
+                  364
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.01012617721337949
+              },
+              {
+                "edge": [
+                  69,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01139289285375783
+              },
+              {
+                "edge": [
+                  70,
+                  1075
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.012714906698628963
+              },
+              {
+                "edge": [
+                  364,
+                  1075
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.017045357841208877
+              },
+              {
+                "edge": [
+                  1075,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.018574537485304642
+              }
+            ],
+            "all_face_edges": [
+              {
+                "edge": [
+                  70,
+                  364
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.009824747735917079
+              },
+              {
+                "edge": [
+                  70,
+                  1093
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01789553208570891
+              },
+              {
+                "edge": [
+                  364,
+                  1093
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.01657936414255815
+              }
+            ]
+          },
+          {
+            "face_id": 1250,
+            "vertices": [
+              126,
+              669,
+              1061
+            ],
+            "tags": [
+              1,
+              1
+            ],
+            "face_locked_edges": [
+              {
+                "edge": [
+                  126,
+                  669
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.008915181025627208
+              },
+              {
+                "edge": [
+                  126,
+                  1061
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.016524231651707837
+              },
+              {
+                "edge": [
+                  669,
+                  1061
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.014789211915911031
+              }
+            ],
+            "tet_locked_edges": [
+              {
+                "edge": [
+                  125,
+                  126
+                ],
+                "locked": true,
+                "location": "rim_circle(z=0.03)",
+                "length_m": 0.00996917713213947
+              },
+              {
+                "edge": [
+                  125,
+                  669
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.008589977387471569
+              },
+              {
+                "edge": [
+                  125,
+                  1061
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.01111694457905894
+              },
+              {
+                "edge": [
+                  126,
+                  1094
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.010129000917212784
+              },
+              {
+                "edge": [
+                  669,
+                  1094
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.014228704361131004
+              },
+              {
+                "edge": [
+                  1061,
+                  1094
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.014617405614069654
+              }
+            ],
+            "all_face_edges": [
+              {
+                "edge": [
+                  126,
+                  669
+                ],
+                "locked": true,
+                "location": "plane(z=0.03)",
+                "length_m": 0.008915181025627208
+              },
+              {
+                "edge": [
+                  126,
+                  1061
+                ],
+                "locked": true,
+                "location": "cylinder_wall",
+                "length_m": 0.016524231651707837
+              },
+              {
+                "edge": [
+                  669,
+                  1061
+                ],
+                "locked": true,
+                "location": "interior_or_mixed",
+                "length_m": 0.014789211915911031
+              }
+            ]
+          }
+        ],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 2,
+            "plane": 2,
+            "interior_or_mixed": 2
+          },
+          "tet_locked_edges": {
+            "rim_circle": 2,
+            "cylinder_wall": 6,
+            "plane": 2,
+            "interior_or_mixed": 2
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 2,
+            "plane": 2,
+            "interior_or_mixed": 2
+          }
+        },
+        "steiner_nodes_detail": []
+      },
+      "w4_repaired": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "guard_negative_before": 2,
+        "guard_negative_after": 0,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 2,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "max_all_steiner_dist_to_cad_m": 0.0,
+        "max_steiner_radial_err_m": 0.0,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 2,
+          "steiner_projected": 2,
+          "refused": {
+            "no_projector": 0,
+            "locked": 3
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "stuck_faces": [],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "tet_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          }
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.032041350181008094,
+              0.03521597294143149
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.0935314566022787,
+              -0.03538172728762768,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ]
+      }
+    },
+    "P2_test_imp_true": {
+      "wave3_split_project_none": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "guard_negative_before": 2,
+        "guard_negative_after": 0,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "max_all_steiner_dist_to_cad_m": 0.0,
+        "max_steiner_radial_err_m": 0.0,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "boundary": 2,
+            "no_projector": 8,
+            "locked": 2
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "stuck_faces": [],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "tet_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          }
+        },
+        "steiner_nodes_detail": []
+      },
+      "w4_split_project_auto": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "guard_negative_before": 2,
+        "guard_negative_after": 0,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 0,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "max_all_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "max_steiner_radial_err_m": 1.3877787807814457e-17,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 0,
+          "steiner_projected": 2,
+          "refused": {
+            "boundary": 3,
+            "no_projector": 0
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "stuck_faces": [],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "tet_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          }
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.03204135018100809,
+              0.03521597294143149
+            ],
+            "r_m": 0.09999999999999999,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 1.3877787807814457e-17,
+            "radial_err_from_a_m": 1.3877787807814457e-17,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.09353145660227868,
+              -0.035381727287627715,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ]
+      }
+    },
+    "P3_study_flip_only_unlocked": {
+      "n_tets": 8364,
+      "n_nodes": 1830,
+      "n_faces": 17651,
+      "guard_negative_before": 2,
+      "guard_negative_after": 2,
+      "steiner_nodes": 0,
+      "steiner_on_locked": 0,
+      "steiner_projected": 0,
+      "max_steiner_dist_to_cad_m": 0.0,
+      "max_all_steiner_dist_to_cad_m": 0.0,
+      "max_steiner_radial_err_m": 0.0,
+      "repair_report": {
+        "flips": {
+          "2-3": 0,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "refused": {
+          "no_projector": 10,
+          "boundary": 2
+        },
+        "negative_faces_before": 2,
+        "negative_faces_after": 2,
+        "stuck": [
+          573,
+          1250
+        ]
+      },
+      "stuck_faces": [
+        {
+          "face_id": 573,
+          "vertices": [
+            70,
+            364,
+            1093
+          ],
+          "tags": [
+            1,
+            1
+          ],
+          "face_locked_edges": [
+            {
+              "edge": [
+                70,
+                364
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.009824747735917079
+            },
+            {
+              "edge": [
+                70,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01789553208570891
+            },
+            {
+              "edge": [
+                364,
+                1093
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.01657936414255815
+            }
+          ],
+          "tet_locked_edges": [
+            {
+              "edge": [
+                69,
+                70
+              ],
+              "locked": true,
+              "location": "rim_circle(z=0.03)",
+              "length_m": 0.009969177132139429
+            },
+            {
+              "edge": [
+                69,
+                364
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.01012617721337949
+            },
+            {
+              "edge": [
+                69,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01139289285375783
+            },
+            {
+              "edge": [
+                70,
+                1075
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.012714906698628963
+            },
+            {
+              "edge": [
+                364,
+                1075
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.017045357841208877
+            },
+            {
+              "edge": [
+                1075,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.018574537485304642
+            }
+          ],
+          "all_face_edges": [
+            {
+              "edge": [
+                70,
+                364
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.009824747735917079
+            },
+            {
+              "edge": [
+                70,
+                1093
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01789553208570891
+            },
+            {
+              "edge": [
+                364,
+                1093
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.01657936414255815
+            }
+          ]
+        },
+        {
+          "face_id": 1250,
+          "vertices": [
+            126,
+            669,
+            1061
+          ],
+          "tags": [
+            1,
+            1
+          ],
+          "face_locked_edges": [
+            {
+              "edge": [
+                126,
+                669
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.008915181025627208
+            },
+            {
+              "edge": [
+                126,
+                1061
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.016524231651707837
+            },
+            {
+              "edge": [
+                669,
+                1061
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.014789211915911031
+            }
+          ],
+          "tet_locked_edges": [
+            {
+              "edge": [
+                125,
+                126
+              ],
+              "locked": true,
+              "location": "rim_circle(z=0.03)",
+              "length_m": 0.00996917713213947
+            },
+            {
+              "edge": [
+                125,
+                669
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.008589977387471569
+            },
+            {
+              "edge": [
+                125,
+                1061
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.01111694457905894
+            },
+            {
+              "edge": [
+                126,
+                1094
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.010129000917212784
+            },
+            {
+              "edge": [
+                669,
+                1094
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.014228704361131004
+            },
+            {
+              "edge": [
+                1061,
+                1094
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.014617405614069654
+            }
+          ],
+          "all_face_edges": [
+            {
+              "edge": [
+                126,
+                669
+              ],
+              "locked": true,
+              "location": "plane(z=0.03)",
+              "length_m": 0.008915181025627208
+            },
+            {
+              "edge": [
+                126,
+                1061
+              ],
+              "locked": true,
+              "location": "cylinder_wall",
+              "length_m": 0.016524231651707837
+            },
+            {
+              "edge": [
+                669,
+                1061
+              ],
+              "locked": true,
+              "location": "interior_or_mixed",
+              "length_m": 0.014789211915911031
+            }
+          ]
+        }
+      ],
+      "stuck_edge_classes": {
+        "face_locked_edges": {
+          "rim_circle": 0,
+          "cylinder_wall": 2,
+          "plane": 2,
+          "interior_or_mixed": 2
+        },
+        "tet_locked_edges": {
+          "rim_circle": 2,
+          "cylinder_wall": 6,
+          "plane": 2,
+          "interior_or_mixed": 2
+        },
+        "all_face_edges": {
+          "rim_circle": 0,
+          "cylinder_wall": 2,
+          "plane": 2,
+          "interior_or_mixed": 2
+        }
+      },
+      "steiner_nodes_detail": [],
+      "wave3_unprojected_chord": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "guard_negative_before": 2,
+        "guard_negative_after": 0,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 0,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 0.00026463086463214547,
+        "max_all_steiner_dist_to_cad_m": 0.00026463086463214547,
+        "max_steiner_radial_err_m": 0.00026463086463214547,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 0,
+          "steiner_projected": 2,
+          "refused": {
+            "no_projector": 0,
+            "boundary": 3
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "stuck_faces": [],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "tet_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          }
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.0944770988186137,
+              0.03195655887898428,
+              0.03521597294143149
+            ],
+            "r_m": 0.09973536913536786,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.00026463086463214547,
+            "radial_err_from_a_m": 0.00026463086463214547,
+            "chord_split_geometry_error": true
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.09334912975944107,
+              -0.035312755426557166,
+              0.03541417404417656
+            ],
+            "r_m": 0.09980506361232785,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.00019493638767215105,
+            "radial_err_from_a_m": 0.00019493638767215105,
+            "chord_split_geometry_error": true
+          }
+        ]
+      }
+    },
+    "P4_study_improve_sweeps10": {
+      "wave3_split_project_none": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "guard_negative_before": 2,
+        "guard_negative_after": 0,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "max_all_steiner_dist_to_cad_m": 0.0,
+        "max_steiner_radial_err_m": 0.0,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "boundary": 2,
+            "no_projector": 8,
+            "locked": 2
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "stuck_faces": [],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "tet_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          }
+        },
+        "steiner_nodes_detail": []
+      },
+      "w4_split_project_auto": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "guard_negative_before": 2,
+        "guard_negative_after": 0,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 0,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "max_all_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "max_steiner_radial_err_m": 1.3877787807814457e-17,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 0,
+          "steiner_projected": 2,
+          "refused": {
+            "boundary": 3,
+            "no_projector": 0
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "stuck_faces": [],
+        "stuck_edge_classes": {
+          "face_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "tet_locked_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          },
+          "all_face_edges": {
+            "rim_circle": 0,
+            "cylinder_wall": 0,
+            "plane": 0,
+            "interior_or_mixed": 0
+          }
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.03204135018100809,
+              0.03521597294143149
+            ],
+            "r_m": 0.09999999999999999,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 1.3877787807814457e-17,
+            "radial_err_from_a_m": 1.3877787807814457e-17,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.09353145660227868,
+              -0.035381727287627715,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ]
+      }
+    },
+    "recorded_w3_layered_cpw10": {
+      "n_tets_before": 8364,
+      "n_nodes_before": 1830,
+      "n_faces_before": 17651,
+      "negative_faces_before": 2,
+      "P3_flip_only_n_tets_after": 8372,
+      "P3_flip_only_n_nodes_after": 1832,
+      "P3_flip_only_n_faces_after": 17669,
+      "P3_flip_only": {
+        "flips": {
+          "2-3": 4,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 2,
+        "refused": {
+          "boundary": 3
+        },
+        "negative_faces_before": 2,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "P4_improve_sweeps10_n_tets_after": 8372,
+      "P4_improve_sweeps10_n_nodes_after": 1832,
+      "P4_improve_sweeps10_n_faces_after": 17669,
+      "P4_improve_sweeps10": {
+        "flips": {
+          "2-3": 4,
+          "3-2": 0,
+          "4-4": 0,
+          "2-2": 0
+        },
+        "steiner_nodes": 2,
+        "refused": {
+          "boundary": 3
+        },
+        "negative_faces_before": 2,
+        "negative_faces_after": 0,
+        "stuck": []
+      },
+      "suite_dt_gain_vs_repair_false_min": 0.9447097520082607,
+      "suite_dt_gain_vs_repair_false_max": 1.0536357723345402
+    },
+    "explanation": "1. P1 (test imp=None) runs improve_dt(n_sweeps=0, repair=True) after gmsh is finalized, using default project='planar'. planar_projector locks every node on the curved cylinder wall (r=a) as well as the rim circles. In wave-3 (split_project=None), all fixing flips and boundary-edge splits are refused ({'no_projector': 0, 'locked': 24}), leaving 2 stuck faces. With post-gmsh default split_project='auto' (feature_curve_projector), the blocking edges on the stuck faces are curved cylinder-wall edges rather than sharp rim curves, leaving 2 stuck faces (refused={'no_projector': 16, 'locked': 4}); imp=None reaches 0 negative faces only with an analytic pillbox projector (steiner_nodes=2, steiner_on_locked=2, steiner_projected=2). 2. P2 (imp=True, mesh_cad + CadSplitProjector) reaches 0 negative faces via CAD surface projection (steiner_nodes=2, steiner_on_locked=0, steiner_projected=2). 3. In recorded wave-3 results/repair.json, P3 (flip_only with locked=None) and P4 (improve with cad_projector) reached 0 via unprojected chord splits ({'flips': {'2-3': 4, '3-2': 0, '4-4': 0, '2-2': 0}, 'steiner_nodes': 2, 'refused': {'boundary': 3}, 'negative_faces_before': 2, 'negative_faces_after': 0, 'stuck': []})."
+  },
+  "cases": [
+    {
+      "case": "pillbox",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 6,
+      "f_ref_hz": 1147425278.3521006,
+      "before": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753606,
+        "f_all_hz": [
+          1143118884.4753606,
+          1733560667.131564,
+          1735344794.4749174,
+          1811317795.1990032,
+          1820001692.3382962
+        ],
+        "lowest_freq_err": -0.003753093084130632,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 8.159999822510144e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753602,
+        "f_all_hz": [
+          1143118884.4753602,
+          1733560667.1315644,
+          1735344794.4749174,
+          1811317795.1990025,
+          1820001692.338297
+        ],
+        "lowest_freq_err": -0.003753093084131076,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.22996029199998702
+      },
+      "pure_steiner_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753606,
+        "f_all_hz": [
+          1143118884.4753606,
+          1733560667.1315641,
+          1735344794.4749174,
+          1811317795.1990025,
+          1820001692.3382974
+        ],
+        "lowest_freq_err": -0.003753093084130632,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.273561892999993
+      },
+      "variant_i_repair_false": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031249503146219314
+          },
+          "total": 0.0031249503146219314
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8355185559071793e-11,
+        "courant_h": 0.22366221439430764,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1143975702.717252,
+        "f_all_hz": [
+          1143975702.717252,
+          1731796270.3652098,
+          1735519026.44572,
+          1812413741.7602308,
+          1821684123.8206632
+        ],
+        "lowest_freq_err": -0.0030063618955674665,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 2.713914430000017
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031249503146219314
+          },
+          "total": 0.0031249503146219314
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8355185559071793e-11,
+        "courant_h": 0.22366221439430764,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1143975702.7172518,
+        "f_all_hz": [
+          1143975702.7172518,
+          1731796270.3652098,
+          1735519026.4457202,
+          1812413741.760231,
+          1821684123.8206635
+        ],
+        "lowest_freq_err": -0.0030063618955675775,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.888019804999999
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031249503146219314
+          },
+          "total": 0.0031249503146219314
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8355185559071793e-11,
+        "courant_h": 0.22366221439430764,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1143975702.717252,
+        "f_all_hz": [
+          1143975702.717252,
+          1731796270.3652098,
+          1735519026.4457202,
+          1812413741.760231,
+          1821684123.8206635
+        ],
+        "lowest_freq_err": -0.0030063618955674665,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.852887866000003
+      },
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_wave3_repair": 1.0,
+      "pure_dt_gain_vs_wave3": 1.0,
+      "wall_s": 9.556258505999978
+    },
+    {
+      "case": "layered",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 6,
+      "f_ref_hz": 936518201.5981728,
+      "before": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 2,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.915464663076031e-12,
+        "courant_h": 0.14049157999349562,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222240.1541357,
+        "f_all_hz": [
+          931222240.1541357
+        ],
+        "lowest_freq_err": -0.005654947693487955,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 1.0649999921952258e-06
+      },
+      "pure_wave3_repair": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 2,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.915464663076031e-12,
+        "courant_h": 0.14049157999349562,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222240.1541364,
+        "f_all_hz": [
+          931222240.1541364
+        ],
+        "lowest_freq_err": -0.005654947693487178,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0,
+            "locked": 24
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 2,
+          "stuck": [
+            573,
+            1250
+          ]
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 1.4828312690000018
+      },
+      "pure_steiner_repair": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 2,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890324501269947
+          },
+          "total": 0.0031303634174742476
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.91546467984067e-12,
+        "courant_h": 0.14053032060998671,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931220970.6810671,
+        "f_all_hz": [
+          931220970.6810671
+        ],
+        "lowest_freq_err": -0.005656303217669412,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 2,
+          "steiner_projected": 2,
+          "refused": {
+            "no_projector": 0,
+            "locked": 3
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.032041350181008094,
+              0.03521597294143149
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.0935314566022787,
+              -0.03538172728762768,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ],
+        "wall_s": 4.5235553589999995
+      },
+      "variant_i_repair_false": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009412967562757783,
+            "1": 0.002188866500423816
+          },
+          "total": 0.0031301632566995943
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.774454773844132e-12,
+        "courant_h": 0.19801443091709017,
+        "limit_element": 7892,
+        "limit_radius_ratio": 0.743881933612712,
+        "limit_min_dihedral": 37.71073527241303,
+        "limit_edge_length": 0.013254202276565923,
+        "f0_hz": 931829580.9241083,
+        "f_all_hz": [
+          931829580.9241083
+        ],
+        "lowest_freq_err": -0.0050064383864225626,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 11.180207542000005
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009412967562757783,
+            "1": 0.002188866500423816
+          },
+          "total": 0.0031301632566995943
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.774454773844132e-12,
+        "courant_h": 0.19801443091709017,
+        "limit_element": 7892,
+        "limit_radius_ratio": 0.743881933612712,
+        "limit_min_dihedral": 37.71073527241303,
+        "limit_edge_length": 0.013254202276565923,
+        "f0_hz": 931829580.9241066,
+        "f_all_hz": [
+          931829580.9241066
+        ],
+        "lowest_freq_err": -0.005006438386424339,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "boundary": 2,
+            "no_projector": 8,
+            "locked": 2
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 12.343869788999996
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 0,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.000941288511199154,
+            "1": 0.002188853734091624
+          },
+          "total": 0.003130142245290778
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.55964104581947e-12,
+        "courant_h": 0.19372413702766428,
+        "limit_element": 7890,
+        "limit_radius_ratio": 0.7303221999750291,
+        "limit_min_dihedral": 35.95046339998039,
+        "limit_edge_length": 0.013392025064220749,
+        "f0_hz": 931764837.064936,
+        "f_all_hz": [
+          931764837.064936
+        ],
+        "lowest_freq_err": -0.005075570902012494,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 0,
+          "steiner_projected": 2,
+          "refused": {
+            "boundary": 3,
+            "no_projector": 0
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.03204135018100809,
+              0.03521597294143149
+            ],
+            "r_m": 0.09999999999999999,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 1.3877787807814457e-17,
+            "radial_err_from_a_m": 1.3877787807814457e-17,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.09353145660227868,
+              -0.035381727287627715,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ],
+        "wall_s": 13.043060682999993
+      },
+      "dt_gain_vs_repair_false": 0.978022945218439,
+      "dt_gain_vs_wave3_repair": 0.978022945218439,
+      "pure_dt_gain_vs_wave3": 1.0000000024242246,
+      "wall_s": 48.427081491999985
+    },
+    {
+      "case": "muon",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 6,
+      "f_ref_hz": 704156915.7639738,
+      "before": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133461,
+        "f_all_hz": [
+          717836070.7133461,
+          1074277809.0298972,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287506,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 4.489999980705761e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.0298972,
+          1077611362.529014,
+          1435421566.384075
+        ],
+        "lowest_freq_err": 0.019426287867287284,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.1460227070000144
+      },
+      "pure_steiner_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.029897,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287284,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.24588347600001725
+      },
+      "variant_i_repair_false": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.335804988264085e-11,
+        "courant_h": 0.2056072919181329,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657824,
+        "f_all_hz": [
+          718933327.3657824,
+          1076192532.5308561,
+          1079029708.56187,
+          1438913615.073872
+        ],
+        "lowest_freq_err": 0.020984543744453577,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 2.091952665000008
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.335804988264085e-11,
+        "courant_h": 0.2056072919181329,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657823,
+        "f_all_hz": [
+          718933327.3657823,
+          1076192532.5308564,
+          1079029708.5618703,
+          1438913615.0738719
+        ],
+        "lowest_freq_err": 0.020984543744453354,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.255907718000003
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.335804988264085e-11,
+        "courant_h": 0.2056072919181329,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657823,
+        "f_all_hz": [
+          718933327.3657823,
+          1076192532.530856,
+          1079029708.5618703,
+          1438913615.0738723
+        ],
+        "lowest_freq_err": 0.020984543744453354,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.189739793000001
+      },
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_wave3_repair": 1.0,
+      "pure_dt_gain_vs_wave3": 1.0,
+      "wall_s": 7.937669825
+    }
+  ],
+  "all_runs": [
+    {
+      "case": "pillbox",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 6,
+      "f_ref_hz": 1147425278.3521006,
+      "before": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753606,
+        "f_all_hz": [
+          1143118884.4753606,
+          1733560667.131564,
+          1735344794.4749174,
+          1811317795.1990032,
+          1820001692.3382962
+        ],
+        "lowest_freq_err": -0.003753093084130632,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 8.159999822510144e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753602,
+        "f_all_hz": [
+          1143118884.4753602,
+          1733560667.1315644,
+          1735344794.4749174,
+          1811317795.1990025,
+          1820001692.338297
+        ],
+        "lowest_freq_err": -0.003753093084131076,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.22996029199998702
+      },
+      "pure_steiner_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273992791468e-11,
+        "courant_h": 0.15821046287702933,
+        "limit_element": 1028,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143118884.4753606,
+        "f_all_hz": [
+          1143118884.4753606,
+          1733560667.1315641,
+          1735344794.4749174,
+          1811317795.1990025,
+          1820001692.3382974
+        ],
+        "lowest_freq_err": -0.003753093084130632,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.273561892999993
+      },
+      "variant_i_repair_false": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031249503146219314
+          },
+          "total": 0.0031249503146219314
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8355185559071793e-11,
+        "courant_h": 0.22366221439430764,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1143975702.717252,
+        "f_all_hz": [
+          1143975702.717252,
+          1731796270.3652098,
+          1735519026.44572,
+          1812413741.7602308,
+          1821684123.8206632
+        ],
+        "lowest_freq_err": -0.0030063618955674665,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 2.713914430000017
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031249503146219314
+          },
+          "total": 0.0031249503146219314
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8355185559071793e-11,
+        "courant_h": 0.22366221439430764,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1143975702.7172518,
+        "f_all_hz": [
+          1143975702.7172518,
+          1731796270.3652098,
+          1735519026.4457202,
+          1812413741.760231,
+          1821684123.8206635
+        ],
+        "lowest_freq_err": -0.0030063618955675775,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.888019804999999
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 2117,
+        "n_nodes": 556,
+        "n_faces": 4633,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031249503146219314
+          },
+          "total": 0.0031249503146219314
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8355185559071793e-11,
+        "courant_h": 0.22366221439430764,
+        "limit_element": 30,
+        "limit_radius_ratio": 0.8415327451555762,
+        "limit_min_dihedral": 40.7691560747985,
+        "limit_edge_length": 0.030032877187043852,
+        "f0_hz": 1143975702.717252,
+        "f_all_hz": [
+          1143975702.717252,
+          1731796270.3652098,
+          1735519026.4457202,
+          1812413741.760231,
+          1821684123.8206635
+        ],
+        "lowest_freq_err": -0.0030063618955674665,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.852887866000003
+      },
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_wave3_repair": 1.0,
+      "pure_dt_gain_vs_wave3": 1.0,
+      "wall_s": 9.556258505999978
+    },
+    {
+      "case": "layered",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 6,
+      "f_ref_hz": 936518201.5981728,
+      "before": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 2,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.915464663076031e-12,
+        "courant_h": 0.14049157999349562,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222240.1541357,
+        "f_all_hz": [
+          931222240.1541357
+        ],
+        "lowest_freq_err": -0.005654947693487955,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 1.0649999921952258e-06
+      },
+      "pure_wave3_repair": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 2,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.915464663076031e-12,
+        "courant_h": 0.14049157999349562,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222240.1541364,
+        "f_all_hz": [
+          931222240.1541364
+        ],
+        "lowest_freq_err": -0.005654947693487178,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0,
+            "locked": 24
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 2,
+          "stuck": [
+            573,
+            1250
+          ]
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 1.4828312690000018
+      },
+      "pure_steiner_repair": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 2,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890324501269947
+          },
+          "total": 0.0031303634174742476
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.91546467984067e-12,
+        "courant_h": 0.14053032060998671,
+        "limit_element": 6644,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931220970.6810671,
+        "f_all_hz": [
+          931220970.6810671
+        ],
+        "lowest_freq_err": -0.005656303217669412,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 2,
+          "steiner_projected": 2,
+          "refused": {
+            "no_projector": 0,
+            "locked": 3
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.032041350181008094,
+              0.03521597294143149
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.0935314566022787,
+              -0.03538172728762768,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ],
+        "wall_s": 4.5235553589999995
+      },
+      "variant_i_repair_false": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009412967562757783,
+            "1": 0.002188866500423816
+          },
+          "total": 0.0031301632566995943
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.774454773844132e-12,
+        "courant_h": 0.19801443091709017,
+        "limit_element": 7892,
+        "limit_radius_ratio": 0.743881933612712,
+        "limit_min_dihedral": 37.71073527241303,
+        "limit_edge_length": 0.013254202276565923,
+        "f0_hz": 931829580.9241083,
+        "f_all_hz": [
+          931829580.9241083
+        ],
+        "lowest_freq_err": -0.0050064383864225626,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 11.180207542000005
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 8364,
+        "n_nodes": 1830,
+        "n_faces": 17651,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009412967562757783,
+            "1": 0.002188866500423816
+          },
+          "total": 0.0031301632566995943
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.774454773844132e-12,
+        "courant_h": 0.19801443091709017,
+        "limit_element": 7892,
+        "limit_radius_ratio": 0.743881933612712,
+        "limit_min_dihedral": 37.71073527241303,
+        "limit_edge_length": 0.013254202276565923,
+        "f0_hz": 931829580.9241066,
+        "f_all_hz": [
+          931829580.9241066
+        ],
+        "lowest_freq_err": -0.005006438386424339,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "boundary": 2,
+            "no_projector": 8,
+            "locked": 2
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 12.343869788999996
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 8372,
+        "n_nodes": 1832,
+        "n_faces": 17669,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 0,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.000941288511199154,
+            "1": 0.002188853734091624
+          },
+          "total": 0.003130142245290778
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.55964104581947e-12,
+        "courant_h": 0.19372413702766428,
+        "limit_element": 7890,
+        "limit_radius_ratio": 0.7303221999750291,
+        "limit_min_dihedral": 35.95046339998039,
+        "limit_edge_length": 0.013392025064220749,
+        "f0_hz": 931764837.064936,
+        "f_all_hz": [
+          931764837.064936
+        ],
+        "lowest_freq_err": -0.005075570902012494,
+        "repair_report": {
+          "flips": {
+            "2-3": 4,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 0,
+          "steiner_projected": 2,
+          "refused": {
+            "boundary": 3,
+            "no_projector": 0
+          },
+          "negative_faces_before": 2,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.03204135018100809,
+              0.03521597294143149
+            ],
+            "r_m": 0.09999999999999999,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 1.3877787807814457e-17,
+            "radial_err_from_a_m": 1.3877787807814457e-17,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.09353145660227868,
+              -0.035381727287627715,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ],
+        "wall_s": 13.043060682999993
+      },
+      "dt_gain_vs_repair_false": 0.978022945218439,
+      "dt_gain_vs_wave3_repair": 0.978022945218439,
+      "pure_dt_gain_vs_wave3": 1.0000000024242246,
+      "wall_s": 48.427081491999985
+    },
+    {
+      "case": "muon",
+      "cpw": 10,
+      "optimize": "none",
+      "n_sweeps": 6,
+      "f_ref_hz": 704156915.7639738,
+      "before": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133461,
+        "f_all_hz": [
+          717836070.7133461,
+          1074277809.0298972,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287506,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 4.489999980705761e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.0298972,
+          1077611362.529014,
+          1435421566.384075
+        ],
+        "lowest_freq_err": 0.019426287867287284,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.1460227070000144
+      },
+      "pure_steiner_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.543640843719826e-11,
+        "courant_h": 0.1360353416203217,
+        "limit_element": 1422,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133459,
+        "f_all_hz": [
+          717836070.7133459,
+          1074277809.029897,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287284,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.24588347600001725
+      },
+      "variant_i_repair_false": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.335804988264085e-11,
+        "courant_h": 0.2056072919181329,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657824,
+        "f_all_hz": [
+          718933327.3657824,
+          1076192532.5308561,
+          1079029708.56187,
+          1438913615.073872
+        ],
+        "lowest_freq_err": 0.020984543744453577,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 2.091952665000008
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.335804988264085e-11,
+        "courant_h": 0.2056072919181329,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657823,
+        "f_all_hz": [
+          718933327.3657823,
+          1076192532.5308564,
+          1079029708.5618703,
+          1438913615.0738719
+        ],
+        "lowest_freq_err": 0.020984543744453354,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.255907718000003
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.335804988264085e-11,
+        "courant_h": 0.2056072919181329,
+        "limit_element": 1109,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657823,
+        "f_all_hz": [
+          718933327.3657823,
+          1076192532.530856,
+          1079029708.5618703,
+          1438913615.0738723
+        ],
+        "lowest_freq_err": 0.020984543744453354,
+        "repair_report": {
+          "flips": {
+            "2-3": 0,
+            "3-2": 0,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 0,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.189739793000001
+      },
+      "dt_gain_vs_repair_false": 1.0,
+      "dt_gain_vs_wave3_repair": 1.0,
+      "pure_dt_gain_vs_wave3": 1.0,
+      "wall_s": 7.937669825
+    },
+    {
+      "case": "pillbox",
+      "cpw": 10,
+      "optimize": "gmsh",
+      "n_sweeps": 6,
+      "f_ref_hz": 1147425278.3521006,
+      "before": {
+        "n_tets": 2066,
+        "n_nodes": 556,
+        "n_faces": 4531,
+        "n_negative_faces": 48,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929274620562055e-11,
+        "courant_h": 0.15903354656044097,
+        "limit_element": 671,
+        "limit_radius_ratio": 0.8694456558800651,
+        "limit_min_dihedral": 41.26133278095743,
+        "limit_edge_length": 0.027692807769643862,
+        "f0_hz": 1142821690.76654,
+        "f_all_hz": [
+          1142821690.76654,
+          1733076292.6339397,
+          1735296525.3575768,
+          1810737306.7294698,
+          1819581426.3617272
+        ],
+        "lowest_freq_err": -0.004012102288849739,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 6.120000080045429e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 2115,
+        "n_nodes": 556,
+        "n_faces": 4629,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273391520276e-11,
+        "courant_h": 0.158269677970626,
+        "limit_element": 922,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143053579.8396509,
+        "f_all_hz": [
+          1143053579.8396509,
+          1733630452.7577972,
+          1735500419.3874822,
+          1811209701.344628,
+          1819987037.2518852
+        ],
+        "lowest_freq_err": -0.003810007148115302,
+        "repair_report": {
+          "flips": {
+            "2-3": 51,
+            "3-2": 2,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 55,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.2824272929999836
+      },
+      "pure_steiner_repair": {
+        "n_tets": 2115,
+        "n_nodes": 556,
+        "n_faces": 4629,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.2929273391520276e-11,
+        "courant_h": 0.158269677970626,
+        "limit_element": 922,
+        "limit_radius_ratio": 0.7067769121249567,
+        "limit_min_dihedral": 37.842408514907596,
+        "limit_edge_length": 0.024937840008742343,
+        "f0_hz": 1143053579.8396506,
+        "f_all_hz": [
+          1143053579.8396506,
+          1733630452.757796,
+          1735500419.3874822,
+          1811209701.3446288,
+          1819987037.251885
+        ],
+        "lowest_freq_err": -0.003810007148115524,
+        "repair_report": {
+          "flips": {
+            "2-3": 51,
+            "3-2": 2,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 55,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.4502285130000132
+      },
+      "variant_i_repair_false": {
+        "n_tets": 2066,
+        "n_nodes": 556,
+        "n_faces": 4531,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031247102757331596
+          },
+          "total": 0.0031247102757331596
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8133770259355794e-11,
+        "courant_h": 0.22211174798999914,
+        "limit_element": 940,
+        "limit_radius_ratio": 0.6486823379958355,
+        "limit_min_dihedral": 40.56437129657234,
+        "limit_edge_length": 0.02266661992352739,
+        "f0_hz": 1143594367.4836476,
+        "f_all_hz": [
+          1143594367.4836476,
+          1733765969.6270442,
+          1735980418.2049763,
+          1813352209.5818706,
+          1823655259.109008
+        ],
+        "lowest_freq_err": -0.003338701822880208,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 2.994212735000019
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 2115,
+        "n_nodes": 556,
+        "n_faces": 4629,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031252990655123115
+          },
+          "total": 0.0031252990655123115
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8014164798981212e-11,
+        "courant_h": 0.2197938862791874,
+        "limit_element": 338,
+        "limit_radius_ratio": 0.7447721166693363,
+        "limit_min_dihedral": 44.51051233132754,
+        "limit_edge_length": 0.02921007849640304,
+        "f0_hz": 1144777556.9819026,
+        "f_all_hz": [
+          1144777556.9819026,
+          1733415541.414283,
+          1736296529.4555407,
+          1812893880.5541544,
+          1822033428.6123013
+        ],
+        "lowest_freq_err": -0.0023075327170763993,
+        "repair_report": {
+          "flips": {
+            "2-3": 51,
+            "3-2": 2,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 55,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.9469848189999936
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 2115,
+        "n_nodes": 556,
+        "n_faces": 4629,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0031262607109627588
+          },
+          "total": 0.0031262607109627588
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0031252990655123115
+          },
+          "total": 0.0031252990655123115
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.0031415926535897937
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.8014164798981212e-11,
+        "courant_h": 0.2197938862791874,
+        "limit_element": 338,
+        "limit_radius_ratio": 0.7447721166693363,
+        "limit_min_dihedral": 44.51051233132754,
+        "limit_edge_length": 0.02921007849640304,
+        "f0_hz": 1144777556.9819026,
+        "f_all_hz": [
+          1144777556.9819026,
+          1733415541.414283,
+          1736296529.4555404,
+          1812893880.5541549,
+          1822033428.6123016
+        ],
+        "lowest_freq_err": -0.0023075327170763993,
+        "repair_report": {
+          "flips": {
+            "2-3": 51,
+            "3-2": 2,
+            "4-4": 0,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 55,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 3.0103683760000024
+      },
+      "dt_gain_vs_repair_false": 0.993404269566453,
+      "dt_gain_vs_wave3_repair": 1.0,
+      "pure_dt_gain_vs_wave3": 1.0,
+      "wall_s": 10.280017291000007
+    },
+    {
+      "case": "layered",
+      "cpw": 10,
+      "optimize": "gmsh",
+      "n_sweeps": 6,
+      "f_ref_hz": 936518201.5981728,
+      "before": {
+        "n_tets": 8196,
+        "n_nodes": 1830,
+        "n_faces": 17315,
+        "n_negative_faces": 218,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.7570283362350706e-12,
+        "courant_h": 0.1381184631021752,
+        "limit_element": 8015,
+        "limit_radius_ratio": 0.45388085399241435,
+        "limit_min_dihedral": 37.01703269634936,
+        "limit_edge_length": 0.01264946923183957,
+        "f0_hz": 930821352.2200441,
+        "f_all_hz": [
+          930821352.2200441
+        ],
+        "lowest_freq_err": -0.006083009778568016,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 6.529999723170476e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 8363,
+        "n_nodes": 1830,
+        "n_faces": 17649,
+        "n_negative_faces": 2,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.002189010033007119
+          },
+          "total": 0.0031303410003543724
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.9154646615691746e-12,
+        "courant_h": 0.14048182866104655,
+        "limit_element": 6177,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931222580.4707518,
+        "f_all_hz": [
+          931222580.4707518
+        ],
+        "lowest_freq_err": -0.005654584308542043,
+        "repair_report": {
+          "flips": {
+            "2-3": 181,
+            "3-2": 14,
+            "4-4": 14,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0,
+            "locked": 24
+          },
+          "negative_faces_before": 233,
+          "negative_faces_after": 2,
+          "stuck": [
+            573,
+            1250
+          ]
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.4838194399999907
+      },
+      "pure_steiner_repair": {
+        "n_tets": 8371,
+        "n_nodes": 1832,
+        "n_faces": 17667,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 2,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.002189032450126995
+          },
+          "total": 0.003130363417474248
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 6.9154646612321744e-12,
+        "courant_h": 0.14052057755520653,
+        "limit_element": 6177,
+        "limit_radius_ratio": 0.6389378323367529,
+        "limit_min_dihedral": 27.894089973829598,
+        "limit_edge_length": 0.017782866132551357,
+        "f0_hz": 931221310.7732843,
+        "f_all_hz": [
+          931221310.7732843
+        ],
+        "lowest_freq_err": -0.005655940072333165,
+        "repair_report": {
+          "flips": {
+            "2-3": 185,
+            "3-2": 14,
+            "4-4": 14,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 2,
+          "steiner_projected": 2,
+          "refused": {
+            "no_projector": 0,
+            "locked": 3
+          },
+          "negative_faces_before": 233,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.032041350181008094,
+              0.03521597294143149
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.0935314566022787,
+              -0.03538172728762768,
+              0.03541417404417656
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03541417404417656,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ],
+        "wall_s": 5.573103900000035
+      },
+      "variant_i_repair_false": {
+        "n_tets": 8196,
+        "n_nodes": 1830,
+        "n_faces": 17315,
+        "n_negative_faces": 5,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009412577286449393,
+            "1": 0.0021884673513860283
+          },
+          "total": 0.003129725080030968
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.0291276284124067e-11,
+        "courant_h": 0.20968285199533626,
+        "limit_element": 7526,
+        "limit_radius_ratio": 0.6876107481670954,
+        "limit_min_dihedral": 32.5031603047779,
+        "limit_edge_length": 0.012875075871132504,
+        "f0_hz": 931391612.5604686,
+        "f_all_hz": [
+          931391612.5604686
+        ],
+        "lowest_freq_err": -0.00547409439448765,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 12.857991983999966
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 8363,
+        "n_nodes": 1830,
+        "n_faces": 17649,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009412816425541709,
+            "1": 0.0021888317326219904
+          },
+          "total": 0.003130113375176161
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 9.989142740370539e-12,
+        "courant_h": 0.20230359572779327,
+        "limit_element": 8357,
+        "limit_radius_ratio": 0.4885396268032897,
+        "limit_min_dihedral": 19.40985174843194,
+        "limit_edge_length": 0.016972418845369836,
+        "f0_hz": 932346846.4073093,
+        "f_all_hz": [
+          932346846.4073093
+        ],
+        "lowest_freq_err": -0.00445411011098884,
+        "repair_report": {
+          "flips": {
+            "2-3": 181,
+            "3-2": 14,
+            "4-4": 14,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "boundary": 2,
+            "no_projector": 8,
+            "locked": 2
+          },
+          "negative_faces_before": 233,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 13.494022911000002
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 8371,
+        "n_nodes": 1832,
+        "n_faces": 17667,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 2,
+        "steiner_on_locked": 0,
+        "steiner_projected": 2,
+        "max_steiner_dist_to_cad_m": 1.3877787807814457e-17,
+        "v_before": {
+          "by_tag": {
+            "0": 0.0009413309673472531,
+            "1": 0.0021890100330071187
+          },
+          "total": 0.003130341000354372
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.0009413027397445428,
+            "1": 0.0021888113015694544
+          },
+          "total": 0.003130114041313997
+        },
+        "v_cad": {
+          "by_tag": {
+            "0": 0.000942477796076938,
+            "1": 0.0021991148575128557
+          },
+          "total": 0.0031415926535897937
+        },
+        "dt_max": 1.0119691317700105e-11,
+        "courant_h": 0.20515503370226065,
+        "limit_element": 7291,
+        "limit_radius_ratio": 0.8075818277447128,
+        "limit_min_dihedral": 43.647065843791694,
+        "limit_edge_length": 0.013392281259079807,
+        "f0_hz": 932004160.299279,
+        "f_all_hz": [
+          932004160.299279
+        ],
+        "lowest_freq_err": -0.004820025164690378,
+        "repair_report": {
+          "flips": {
+            "2-3": 185,
+            "3-2": 14,
+            "4-4": 14,
+            "2-2": 0
+          },
+          "steiner_nodes": 2,
+          "steiner_on_locked": 0,
+          "steiner_projected": 2,
+          "refused": {
+            "boundary": 3,
+            "no_projector": 0
+          },
+          "negative_faces_before": 233,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [
+          {
+            "node": 1830,
+            "xyz_m": [
+              0.09472777775593605,
+              0.03204135018100809,
+              0.03521597294143149
+            ],
+            "r_m": 0.09999999999999999,
+            "z_m": 0.03521597294143149,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 1.3877787807814457e-17,
+            "radial_err_from_a_m": 1.3877787807814457e-17,
+            "chord_split_geometry_error": false
+          },
+          {
+            "node": 1831,
+            "xyz_m": [
+              0.09370660481590068,
+              -0.03491521464743732,
+              0.03526147160925062
+            ],
+            "r_m": 0.1,
+            "z_m": 0.03526147160925062,
+            "on_boundary": true,
+            "locked": true,
+            "dist_to_cad_m": 0.0,
+            "radial_err_from_a_m": 0.0,
+            "chord_split_geometry_error": false
+          }
+        ],
+        "wall_s": 13.54162358299999
+      },
+      "dt_gain_vs_repair_false": 0.9833271441085826,
+      "dt_gain_vs_wave3_repair": 1.013069047136744,
+      "pure_dt_gain_vs_wave3": 0.9999999999512686,
+      "wall_s": 53.440782834000004
+    },
+    {
+      "case": "muon",
+      "cpw": 10,
+      "optimize": "gmsh",
+      "n_sweeps": 6,
+      "f_ref_hz": 704156915.7639738,
+      "before": {
+        "n_tets": 1810,
+        "n_nodes": 504,
+        "n_faces": 3992,
+        "n_negative_faces": 39,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.5436408436808046e-11,
+        "courant_h": 0.13669612771270867,
+        "limit_element": 1349,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 716848321.8058362,
+        "f_all_hz": [
+          716848321.8058362,
+          1073368114.4473037,
+          1076023985.6212547,
+          1434460539.1927683
+        ],
+        "lowest_freq_err": 0.01802354810091278,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 6.519999828924483e-07
+      },
+      "pure_wave3_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.5436408437198262e-11,
+        "courant_h": 0.13603534162032171,
+        "limit_element": 1301,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133462,
+        "f_all_hz": [
+          717836070.7133462,
+          1074277809.0298972,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287728,
+        "repair_report": {
+          "flips": {
+            "2-3": 38,
+            "3-2": 2,
+            "4-4": 3,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 47,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.2472573850000117
+      },
+      "pure_steiner_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 1.5436408437198262e-11,
+        "courant_h": 0.13603534162032171,
+        "limit_element": 1301,
+        "limit_radius_ratio": 0.7644725285961601,
+        "limit_min_dihedral": 46.907256212368,
+        "limit_edge_length": 0.03537080859262639,
+        "f0_hz": 717836070.7133462,
+        "f_all_hz": [
+          717836070.7133462,
+          1074277809.0298972,
+          1077611362.529014,
+          1435421566.3840752
+        ],
+        "lowest_freq_err": 0.019426287867287728,
+        "repair_report": {
+          "flips": {
+            "2-3": 38,
+            "3-2": 2,
+            "4-4": 3,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 47,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 0.34366048999999066
+      },
+      "variant_i_repair_false": {
+        "n_tets": 1810,
+        "n_nodes": 504,
+        "n_faces": 3992,
+        "n_negative_faces": 1,
+        "voronoi_valid": false,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006835870368067365
+          },
+          "total": 0.006835870368067365
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.218940316147034e-11,
+        "courant_h": 0.19618092144787047,
+        "limit_element": 90,
+        "limit_radius_ratio": 0.7245530939346174,
+        "limit_min_dihedral": 52.34822729091832,
+        "limit_edge_length": 0.03986789145698331,
+        "f0_hz": 719162793.4733962,
+        "f_all_hz": [
+          719162793.4733962,
+          1076633512.949969,
+          1079265128.3338957,
+          1437683087.9566226
+        ],
+        "lowest_freq_err": 0.021310417285530292,
+        "repair_report": {},
+        "steiner_nodes_detail": [],
+        "wall_s": 2.4716481450000174
+      },
+      "variant_ii_wave3_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.3358049882640865e-11,
+        "courant_h": 0.205607291918133,
+        "limit_element": 1010,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657819,
+        "f_all_hz": [
+          718933327.3657819,
+          1076192532.530856,
+          1079029708.56187,
+          1438913615.0738719
+        ],
+        "lowest_freq_err": 0.02098454374445269,
+        "repair_report": {
+          "flips": {
+            "2-3": 38,
+            "3-2": 2,
+            "4-4": 3,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 47,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.380425778000017
+      },
+      "variant_iii_steiner_repair": {
+        "n_tets": 1846,
+        "n_nodes": 504,
+        "n_faces": 4064,
+        "n_negative_faces": 0,
+        "voronoi_valid": true,
+        "steiner_nodes": 0,
+        "steiner_on_locked": 0,
+        "steiner_projected": 0,
+        "max_steiner_dist_to_cad_m": 0.0,
+        "v_before": {
+          "by_tag": {
+            "0": 0.006846091449547566
+          },
+          "total": 0.006846091449547566
+        },
+        "v_after": {
+          "by_tag": {
+            "0": 0.006838025899650477
+          },
+          "total": 0.006838025899650477
+        },
+        "v_cad": {
+          "by_tag": {},
+          "total": null
+        },
+        "dt_max": 2.3358049882640865e-11,
+        "courant_h": 0.205607291918133,
+        "limit_element": 1010,
+        "limit_radius_ratio": 0.7379178667524141,
+        "limit_min_dihedral": 35.54433169664245,
+        "limit_edge_length": 0.03987481425043598,
+        "f0_hz": 718933327.3657819,
+        "f_all_hz": [
+          718933327.3657819,
+          1076192532.530856,
+          1079029708.56187,
+          1438913615.073872
+        ],
+        "lowest_freq_err": 0.02098454374445269,
+        "repair_report": {
+          "flips": {
+            "2-3": 38,
+            "3-2": 2,
+            "4-4": 3,
+            "2-2": 0
+          },
+          "steiner_nodes": 0,
+          "steiner_on_locked": 0,
+          "steiner_projected": 0,
+          "refused": {
+            "no_projector": 0
+          },
+          "negative_faces_before": 47,
+          "negative_faces_after": 0,
+          "stuck": []
+        },
+        "steiner_nodes_detail": [],
+        "wall_s": 2.3162346249999928
+      },
+      "dt_gain_vs_repair_false": 1.0526668839475486,
+      "dt_gain_vs_wave3_repair": 1.0,
+      "pure_dt_gain_vs_wave3": 1.0,
+      "wall_s": 8.758571473000018
+    }
+  ],
+  "zoom_example": {
+    "radius_m": 0.1,
+    "stuck_face_vertices": [
+      0,
+      1,
+      43
+    ],
+    "stuck_face_xyz_m": [
+      [
+        0.09999399590675963,
+        0.0010958022627006092,
+        0.0
+      ],
+      [
+        0.08865895623957176,
+        0.04625569671413134,
+        0.0
+      ],
+      [
+        0.0795329751855645,
+        0.01996261150582209,
+        0.006
+      ]
+    ],
+    "split_edge_xyz_m": [
+      [
+        0.09999399590675963,
+        0.0010958022627006092,
+        0.0
+      ],
+      [
+        0.08865895623957176,
+        0.04625569671413134,
+        0.0
+      ]
+    ],
+    "chord_midpoint_xyz_m": [
+      0.09432647607316569,
+      0.023675749488415977,
+      0.0
+    ],
+    "steiner_nodes_xyz_m": [
+      [
+        0.09699143315312747,
+        0.024344648177831826,
+        0.0
+      ]
+    ],
+    "tets_before_xyz_m": [
+      [
+        [
+          0.0795329751855645,
+          0.01996261150582209,
+          0.006
+        ],
+        [
+          0.08865895623957176,
+          0.04625569671413134,
+          0.0
+        ],
+        [
+          0.09677713096481948,
+          0.025183068165300672,
+          0.03
+        ],
+        [
+          0.09999399590675963,
+          0.0010958022627006092,
+          0.0
+        ]
+      ],
+      [
+        [
+          0.0795329751855645,
+          0.01996261150582209,
+          0.006
+        ],
+        [
+          0.08244271818015833,
+          0.020692950951157044,
+          0.0
+        ],
+        [
+          0.08865895623957176,
+          0.04625569671413134,
+          0.0
+        ],
+        [
+          0.09999399590675963,
+          0.0010958022627006092,
+          0.0
+        ]
+      ]
+    ],
+    "tets_after_xyz_m": [
+      [
+        [
+          0.09999399590675963,
+          0.0010958022627006092,
+          0.0
+        ],
+        [
+          0.09699143315312747,
+          0.024344648177831826,
+          0.0
+        ],
+        [
+          0.0795329751855645,
+          0.01996261150582209,
+          0.006
+        ],
+        [
+          0.09677713096481948,
+          0.025183068165300672,
+          0.03
+        ]
+      ],
+      [
+        [
+          0.09699143315312747,
+          0.024344648177831826,
+          0.0
+        ],
+        [
+          0.08865895623957176,
+          0.04625569671413134,
+          0.0
+        ],
+        [
+          0.0795329751855645,
+          0.01996261150582209,
+          0.006
+        ],
+        [
+          0.09677713096481948,
+          0.025183068165300672,
+          0.03
+        ]
+      ],
+      [
+        [
+          0.09999399590675963,
+          0.0010958022627006092,
+          0.0
+        ],
+        [
+          0.09699143315312747,
+          0.024344648177831826,
+          0.0
+        ],
+        [
+          0.08244271818015833,
+          0.020692950951157044,
+          0.0
+        ],
+        [
+          0.0795329751855645,
+          0.01996261150582209,
+          0.006
+        ]
+      ],
+      [
+        [
+          0.09699143315312747,
+          0.024344648177831826,
+          0.0
+        ],
+        [
+          0.08865895623957176,
+          0.04625569671413134,
+          0.0
+        ],
+        [
+          0.08244271818015833,
+          0.020692950951157044,
+          0.0
+        ],
+        [
+          0.0795329751855645,
+          0.01996261150582209,
+          0.006
+        ]
+      ]
+    ],
+    "repair_report": {
+      "flips": {
+        "2-3": 0,
+        "3-2": 0,
+        "4-4": 0,
+        "2-2": 0
+      },
+      "steiner_nodes": 1,
+      "steiner_on_locked": 1,
+      "steiner_projected": 1,
+      "refused": {
+        "no_projector": 0,
+        "interface": 1
+      },
+      "negative_faces_before": 1,
+      "negative_faces_after": 0,
+      "stuck": []
+    }
+  }
+}

@@ -292,6 +292,8 @@ def _local(A, rows, lookup, n_loc):
 # ================================================================ pieces
 def _solver_kind(s):
     if s.mesh.dim == 3:
+        if getattr(s, "lts", None) is not None:
+            raise NotImplementedError("MPI: 3D LTS is not supported")
         if s.hodge != "voronoi":
             raise NotImplementedError(
                 "MPI: hodge='whitney' needs a global solve per step"
@@ -1286,6 +1288,12 @@ class DistributedFIT(_Driver):
 
     def __init__(self, solver, comm, parts=None, partitioner="auto", mode="scatter",
                  root=0, timers=False, _mutation=None):  # fmt: skip
+        if (
+            solver is not None
+            and solver.mesh.dim == 3
+            and getattr(solver, "lts", None) is not None
+        ):
+            raise NotImplementedError("MPI does not support 3D LTS")
         from mpi4py import MPI
 
         self._MPI = MPI

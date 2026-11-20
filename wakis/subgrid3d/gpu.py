@@ -29,7 +29,9 @@ Not supported: Bloch-periodic blocks and complex fields (use the CSR path).
 import numpy as np
 import scipy.sparse as sp
 
-__all__ = ["BlockOps", "get_xp"]
+from .gpu_fused import FusedSubgridStepper, FusedTables
+
+__all__ = ["BlockOps", "FusedSubgridStepper", "FusedTables", "get_xp"]
 
 
 def get_xp(backend):
@@ -63,7 +65,9 @@ class BlockOps:
         s = solver
         M = s.mesh
         if any(any(b.periodic) for b in M.blocks):
-            raise NotImplementedError("block kernels: Bloch-periodic blocks use the CSR path")
+            raise NotImplementedError(
+                "block kernels: Bloch-periodic blocks use the CSR path"
+            )
         if s.dtype is not float and np.dtype(s.dtype).kind == "c":
             raise NotImplementedError("block kernels: real fields only")
         xp, xsp = get_xp(backend)

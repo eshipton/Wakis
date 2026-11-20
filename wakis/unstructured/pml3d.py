@@ -613,6 +613,7 @@ class PML3D:
         S4 = _stage(n, ups)
         S4u = _stage(n, [(L["u"][self.ue], _sel(self.fe.out, n))])
         self.stages = [S1, S2, S3, (S4u @ S4).tocsr()]
+        self._S_bu = S1[L["b"], :][:, L["u"]].tocsr()
         self.x = np.zeros(n)
 
     def ampere_stage(self, a1, den):
@@ -649,13 +650,18 @@ class PML3D:
         s.u = self.x[L["u"]].copy()
         s.b = self.x[L["b"]].copy()
 
-    def apply(self, x, src):
+    def apply(self, x, src, lts=None):
         """One step of the extended state: S4 S3 S2 S1 x + B src (pure)."""
         S1, S2, S3, S4 = self.stages
-        y = S3 @ (S2 @ (S1 @ x)) + self.B @ src
+        s1 = S1 @ x
+        if lts is not None:
+            L = self.layout
+            u = x[L["u"]]
+            s1[L["b"]] += self._S_bu @ (lts.apply(u) - u)
+        y = S3 @ (S2 @ s1) + self.B @ src
         return S4 @ y
 
-    def step_T(self, lam):
+    def step_T(self, lam, lts=None):
         """
         Transposed step: returns (S4 S3 S2 S1)^T lam and B^T S4^T lam.
 
@@ -665,11 +671,17 @@ class PML3D:
         S1, S2, S3, S4 = self.stages
         y = S4.T @ lam
         g_src = self.B.T @ y
-        return S1.T @ (S2.T @ (S3.T @ y)), g_src
+        w = S2.T @ (S3.T @ y)
+        out = S1.T @ w
+        if lts is not None:
+            L = self.layout
+            sb = self._S_bu.T @ w[L["b"]]
+            out[L["u"]] += lts.apply_T(sb) - sb
+        return out, g_src
 
-    def step(self, src):
+    def step(self, src, lts=None):
         """Advance the solver one step with source vector `src` (free edges)."""
-        self.x = self.apply(self.x, src)
+        self.x = self.apply(self.x, src, lts=lts)
         self._push()
 
     # ------------------------------------------------------------ diagnostics

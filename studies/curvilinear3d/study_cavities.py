@@ -28,6 +28,11 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 import numpy as np
 import pyvista as pv
@@ -36,6 +41,7 @@ from scipy.constants import c as C0
 from scipy.sparse.linalg import eigsh
 from scipy.special import j0, j1, jn_zeros, jnp_zeros, jvp, spherical_jn
 
+from studies.curvilinear3d.perturbed_box_order import fit_order as _fit_order
 from wakis.curvilinear.mappings3d import (
     box_te101_omega,
     cylinder_nodes,
@@ -475,18 +481,6 @@ def curvilinear_eigenfrequencies(
         "analytic": analytic,
         "wall_s": float(wall_s),
     }
-
-
-def _fit_order(ns, rel_errors):
-    """Fit convergence order ``p`` from ``rel_error ~ C * (1 / N)^p`` via
-    linear least squares of ``log(rel_error)`` against ``log(N)``."""
-    ns_arr = np.asarray(ns, dtype=float)
-    err_arr = np.asarray(rel_errors, dtype=float)
-    valid = (ns_arr > 0) & (err_arr > 0) & np.isfinite(err_arr)
-    if np.count_nonzero(valid) < 2:
-        return None
-    slope, _ = np.polyfit(np.log(ns_arr[valid]), np.log(err_arr[valid]), 1)
-    return float(-slope)
 
 
 def run_study(

@@ -243,14 +243,18 @@ def _rod_guide_det(k, beta, n, a, b, eps):
             F = jv(n, q * r) * yv(n, q * a) - yv(n, q * r) * jv(n, q * a)
             dF = q * (jvp(n, q * r) * yv(n, q * a) - yvp(n, q * r) * jv(n, q * a))
             Gh = q * (jv(n, q * r) * yvp(n, q * a) - yv(n, q * r) * jvp(n, q * a))
-            dGh = q * q * (jvp(n, q * r) * yvp(n, q * a) - yvp(n, q * r) * jvp(n, q * a))
+            dGh = (
+                q * q * (jvp(n, q * r) * yvp(n, q * a) - yvp(n, q * r) * jvp(n, q * a))
+            )
             return F, dF, Gh, dGh
         q = np.sqrt(-kap2)
         s = -2 / np.pi
         F = s * (iv(n, q * r) * kv(n, q * a) - kv(n, q * r) * iv(n, q * a))
         dF = s * q * (ivp(n, q * r) * kv(n, q * a) - kvp(n, q * r) * iv(n, q * a))
         Gh = s * q * (iv(n, q * r) * kvp(n, q * a) - kv(n, q * r) * ivp(n, q * a))
-        dGh = s * q * q * (ivp(n, q * r) * kvp(n, q * a) - kvp(n, q * r) * ivp(n, q * a))
+        dGh = (
+            s * q * q * (ivp(n, q * r) * kvp(n, q * a) - kvp(n, q * r) * ivp(n, q * a))
+        )
         return F, dF, Gh, dGh
 
     k1, k2 = eps * k**2 - beta**2, k**2 - beta**2
@@ -374,3 +378,185 @@ def layered_pillbox_tm0(a, d, t, eps, n_modes=1, p_max=4):
     kmin = kr / np.sqrt(max(eps, 1.0)) * (1 + 1e-9)
     kmax = np.sqrt(kr**2 + ((p_max + 1) * np.pi / min(t, d - t)) ** 2)
     return np.array(_roots(f, kmax, n_scan=20000, kmin=kmin)[:n_modes])
+
+
+L_SHAPE_SCAN_BRACKET = (8.0, 11.5)
+
+
+def l_shape_dirichlet_eigenvalue(n_terms=24, n_boundary=240, n_interior=200, seed=0):
+    """
+    First Dirichlet eigenvalue of the L-shaped domain
+    ``L = (-1, 1)^2 \\ [0, 1] x [-1, 0]`` [m^2] by the method of particular
+    solutions in subspace-angle form (Fox, Henrici & Moler 1967;
+    Betcke & Trefethen 2005).
+
+    Uses the corner-singular Fourier-Bessel basis
+    ``J_{2j/3}(sqrt(lam) r) sin(2 j theta / 3)``, ``j = 1 .. n_terms``, in polar
+    coordinates ``(r, theta)`` centred at the re-entrant corner ``(0, 0)`` with
+    ``theta in [0, 3 pi / 2]`` measured from the positive ``x`` re-entrant side
+    through the domain. Boundary collocation points lie on the four outer sides
+    not adjacent to the re-entrant corner; interior points stabilize the column
+    space via the thin QR factorization of ``[A_boundary; A_interior]``.
+
+    Parameters
+    ----------
+    n_terms : int, optional
+        Number of singular Fourier-Bessel basis functions (default 24).
+    n_boundary : int, optional
+        Number of collocation points on the four non-re-entrant boundary sides
+        (default 240).
+    n_interior : int, optional
+        Number of interior points for subspace stabilization (default 200).
+    seed : int, optional
+        Random seed for interior point sampling (default 0).
+
+    Returns
+    -------
+    lam : float
+        First Dirichlet eigenvalue ``k^2`` [1/m^2].
+    sigma_min : float
+        Smallest singular value of the boundary rows of ``Q`` at ``lam`` [-].
+    coeffs : ndarray, shape (n_terms,)
+        Fourier-Bessel basis coefficients ``R^-1 v`` [-] of the first Dirichlet
+        eigenfunction ``psi(r, theta) = sum_j c_j J_{2j/3}(sqrt(lam) r) sin(2 j theta / 3)``,
+        sign-normalised so ``coeffs[0] > 0``.
+    """
+    from scipy.optimize import minimize_scalar
+
+    n_terms = int(n_terms)
+    n_boundary = int(n_boundary)
+    n_interior = int(n_interior)
+
+    # Boundary points along the 4 non-re-entrant sides of length 1, 2, 2, 1 (total 6 m)
+    s = (np.arange(n_boundary, dtype=float) + 0.5) * (6.0 / n_boundary)
+    bx = np.empty(n_boundary, dtype=float)
+    by = np.empty(n_boundary, dtype=float)
+    m0 = s < 1.0
+    bx[m0], by[m0] = 1.0, s[m0]
+    m1 = (s >= 1.0) & (s < 3.0)
+    bx[m1], by[m1] = 1.0 - (s[m1] - 1.0), 1.0
+    m2 = (s >= 3.0) & (s < 5.0)
+    bx[m2], by[m2] = -1.0, 1.0 - (s[m2] - 3.0)
+    m3 = s >= 5.0
+    bx[m3], by[m3] = -1.0 + (s[m3] - 5.0), -1.0
+
+    rng = np.random.default_rng(seed)
+    ix, iy = [], []
+    while len(ix) < n_interior:
+        pts = rng.uniform(-1.0, 1.0, size=(2 * n_interior, 2))
+        ok = ~((pts[:, 0] >= 0.0) & (pts[:, 1] <= 0.0)) & (
+            np.hypot(pts[:, 0], pts[:, 1]) > 1e-3
+        )
+        pts = pts[ok]
+        ix.extend(pts[:, 0].tolist())
+        iy.extend(pts[:, 1].tolist())
+    ix = np.asarray(ix[:n_interior], dtype=float)
+    iy = np.asarray(iy[:n_interior], dtype=float)
+
+    x = np.concatenate([bx, ix])
+    y = np.concatenate([by, iy])
+    r = np.hypot(x, y)
+    theta = np.mod(np.arctan2(y, x), 2.0 * np.pi)
+    orders = (2.0 / 3.0) * np.arange(1, n_terms + 1, dtype=float)
+    sin_part = np.sin(theta[:, None] * orders[None, :])
+
+    def sigma(lam):
+        k = np.sqrt(lam)
+        A = jv(orders[None, :], k * r[:, None]) * sin_part
+        Q, _ = np.linalg.qr(A, mode="reduced")
+        return float(np.linalg.svd(Q[:n_boundary], compute_uv=False)[-1])
+
+    lam_lo, lam_hi = L_SHAPE_SCAN_BRACKET
+    grid = np.linspace(lam_lo, lam_hi, 71)
+    vals = np.array([sigma(l) for l in grid])
+    imin = int(np.argmin(vals))
+    if imin == 0 or imin == len(grid) - 1:
+        raise RuntimeError("MPS coarse scan minimum lies on the bracket boundary")
+    res = minimize_scalar(
+        sigma,
+        bounds=(float(grid[imin - 1]), float(grid[imin + 1])),
+        method="bounded",
+        options={"xatol": 1e-13},
+    )
+    lam = float(res.x)
+    k = np.sqrt(lam)
+    A = jv(orders[None, :], k * r[:, None]) * sin_part
+    Q, R = np.linalg.qr(A, mode="reduced")
+    _, s_vals, vt = np.linalg.svd(Q[:n_boundary], full_matrices=False)
+    coeffs = _mps_solve_coeffs(R, vt[-1])
+    if coeffs[0] < 0.0:
+        coeffs = -coeffs
+    return lam, float(s_vals[-1]), coeffs
+
+
+def _mps_solve_coeffs(R, v):
+    """Map the right singular vector ``v`` of ``Q_B`` back to Fourier-Bessel coefficients via ``R``."""
+    return np.linalg.solve(R, v)
+
+
+def l_shape_dirichlet_field(x, y, lam, coeffs):
+    """
+    Evaluate the MPS L-shape Dirichlet eigenfunction ``psi(x, y)`` and its
+    Cartesian gradient ``(dpsi/dx, dpsi/dy)`` for the ``TM_{z0}`` reference
+    electric field ``u = psi z_hat`` and curl ``curl u = grad psi x z_hat``.
+
+    Parameters
+    ----------
+    x, y : array_like
+        Transverse Cartesian coordinates in ``L`` [m].
+    lam : float
+        Eigenvalue ``k^2`` [1/m^2].
+    coeffs : array_like, shape (n_terms,)
+        Fourier-Bessel coefficients returned by `l_shape_dirichlet_eigenvalue` [-].
+
+    Returns
+    -------
+    psi : ndarray
+        Scalar eigenfunction ``psi(x, y)`` [-].
+    dpsi_dx, dpsi_dy : ndarray
+        Cartesian partial derivatives ``dpsi/dx`` and ``dpsi/dy`` [1/m].
+    """
+    from scipy.special import gamma
+
+    x_arr = np.asarray(x, dtype=float)
+    y_arr = np.asarray(y, dtype=float)
+    shape = x_arr.shape
+    px = x_arr.ravel()
+    py = y_arr.ravel()
+    coeffs_arr = np.asarray(coeffs, dtype=float)
+    n_terms = len(coeffs_arr)
+    lam = float(lam)
+
+    r2 = px * px + py * py
+    r = np.maximum(np.sqrt(r2), 1e-300)
+    theta = np.where(
+        (px >= 0.0) & (py == 0.0), 0.0, np.mod(np.arctan2(py, px), 2.0 * np.pi)
+    )
+
+    orders = (2.0 / 3.0) * np.arange(1, n_terms + 1, dtype=float)
+    # Exact power series J_nu(z) = (z/2)^nu sum_{m=0}^{M-1} (-1)^m (z^2/4)^m / (m! Gamma(m + nu + 1))
+    n_series = 18
+    m_idx = np.arange(n_series, dtype=float)
+    a_mj = (
+        ((-1.0) ** m_idx[:, None])
+        / (gamma(m_idx[:, None] + 1.0) * gamma(m_idx[:, None] + orders[None, :] + 1.0))
+    ) * coeffs_arr[None, :]
+    da_mj = (orders[None, :] + 2.0 * m_idx[:, None]) * a_mj
+    oa_mj = orders[None, :] * a_mj
+
+    u = (0.25 * lam) * r2
+    u_pows = np.vander(u, n_series, increasing=True)
+    we = np.cbrt(u) * np.exp(1j * (2.0 / 3.0) * theta)
+    we_pows = np.vander(we, n_terms + 1, increasing=True)[:, 1:]
+    ws = we_pows.imag
+    wc = we_pows.real
+
+    psi = np.einsum("pm,mj,pj->p", u_pows, a_mj, ws, optimize=True)
+    dpsi_dr = np.einsum("pm,mj,pj->p", u_pows, da_mj, ws, optimize=True) / r
+    dpsi_dth_r = np.einsum("pm,mj,pj->p", u_pows, oa_mj, wc, optimize=True) / r
+
+    ct = px / r
+    st = py / r
+    dpsi_dx = (ct * dpsi_dr - st * dpsi_dth_r).reshape(shape)
+    dpsi_dy = (st * dpsi_dr + ct * dpsi_dth_r).reshape(shape)
+    return psi.reshape(shape), dpsi_dx, dpsi_dy

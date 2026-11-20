@@ -437,3 +437,62 @@ def gmsh_ball_mesh(radii, h, filename, verbose=False):
     mesh = gmsh_mesh(build, h, filename, dim=3, verbose=verbose)
     mesh.cell_tags -= 1
     return mesh
+
+
+def box_mesh(xs, ys, zs, jitter=0.0, seed=0):
+    """
+    Delaunay tetrahedralization of a Cartesian tensor node set on a box.
+
+    This is a test and study bed (raw Delaunay tetrahedralization with no
+    smoothing, so slivers are kept). Interior nodes are jittered uniformly
+    by ``jitter`` times the local axis spacing, boundary nodes are jittered
+    only tangentially to the box faces/edges, and flat tetrahedra
+    (volume < ``1e-12 * h**3``) are dropped. Graded meshes are obtained by
+    passing graded 1D coordinate arrays (e.g. ``xs``).
+
+    Parameters
+    ----------
+    xs, ys, zs : array_like
+        Increasing 1D node coordinates along x, y and z [m].
+    jitter : float, optional
+        Uniform perturbation amplitude in units of local axis spacing
+        (default 0.0).
+    seed : int, optional
+        Seed for the random number generator (default 0).
+
+    Returns
+    -------
+    SimplexMesh
+        3D tetrahedral mesh of the box ``[xs[0], xs[-1]] x [ys[0], ys[-1]] x [zs[0], zs[-1]]``.
+    """
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    zs = np.asarray(zs, dtype=float)
+    if xs.ndim != 1 or ys.ndim != 1 or zs.ndim != 1:
+        raise ValueError("xs, ys, zs must be 1D coordinate arrays")
+    if len(xs) < 2 or len(ys) < 2 or len(zs) < 2:
+        raise ValueError("xs, ys, zs must each contain at least 2 coordinates")
+    dx, dy, dz = np.diff(xs), np.diff(ys), np.diff(zs)
+    if np.any(dx <= 0) or np.any(dy <= 0) or np.any(dz <= 0):
+        raise ValueError("xs, ys, zs must be strictly increasing")
+    X, Y, Z = np.meshgrid(xs, ys, zs, indexing="ij")
+    jitter = float(jitter)
+    if jitter > 0.0:
+        rng = np.random.default_rng(seed)
+        if len(xs) > 2:
+            hx = np.minimum(dx[:-1], dx[1:])[:, None, None]
+            X[1:-1, :, :] += rng.uniform(-jitter, jitter, size=X[1:-1, :, :].shape) * hx
+        if len(ys) > 2:
+            hy = np.minimum(dy[:-1], dy[1:])[None, :, None]
+            Y[:, 1:-1, :] += rng.uniform(-jitter, jitter, size=Y[:, 1:-1, :].shape) * hy
+        if len(zs) > 2:
+            hz = np.minimum(dz[:-1], dz[1:])[None, None, :]
+            Z[:, :, 1:-1] += rng.uniform(-jitter, jitter, size=Z[:, :, 1:-1].shape) * hz
+    nodes = np.column_stack([X.ravel(), Y.ravel(), Z.ravel()])
+    tet = Delaunay(nodes).simplices
+    P = nodes[tet]
+    vol = np.abs(np.linalg.det(P[:, 1:] - P[:, :1])) / 6.0
+    h = float(np.mean([dx.mean(), dy.mean(), dz.mean()]))
+    tet = tet[vol >= 1e-12 * h**3]
+    return SimplexMesh(nodes, tet)
+

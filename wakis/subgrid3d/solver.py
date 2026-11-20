@@ -30,6 +30,15 @@ import scipy.sparse.linalg as sla
 from scipy.constants import epsilon_0 as EPS0
 from scipy.constants import mu_0 as MU0
 
+from .media import (
+    assemble_subgrid_media,
+    dispersive_dt_max,
+    dispersive_eigenfrequencies,
+    dispersive_energy,
+    setup_dispersive_groups,
+    step_dispersive,
+    update_dispersive_dt,
+)
 from .mesh import SubgridMesh3D
 
 __all__ = ["SubgridFIT3D", "Box"]
@@ -94,36 +103,36 @@ class SubgridFIT3D:
     """
 
     def __init__(self, mesh, eps_r=None, mu_r=None, pec=None, pmc=None, dt=None, cfl=0.95,
-                 mutate=None, edge_scale=None, face_scale=None):  # fmt: skip
+                 mutate=None, edge_scale=None, face_scale=None, dispersive=None,
+                 averaging="staircase", n_sub=4, normal=None, check_stability=True):  # fmt: skip
         if not isinstance(mesh, SubgridMesh3D):
             raise TypeError("mesh must be a SubgridMesh3D")
         self.mesh = mesh.build()
         self.mutate = mutate
+        self.averaging = averaging
+        self.n_sub = int(n_sub)
         M = self.mesh
         nE, nF = M.n_edges, M.n_faces
-        m_all = np.zeros(nE)
         W_all = np.zeros(nF)
         pec_edge = np.zeros(nE, bool)
         pec_side = np.zeros(nE, bool)
         self.eps_cells, self.mu_cells, self.pec_cells = [], [], []
+        pec_raw = []
         mids, lens, dirs, eblk = [], [], [], []
         cens, areas, norms = [], [], []
         curls, divs = [], []
         for bi, blk in enumerate(M.blocks):
             X, Y, Z = blk.cell_centres()
-            eps = _material(eps_r, X, Y, Z, 1.0).ravel()
             mu = _material(mu_r, X, Y, Z, 1.0).ravel()
             pc = _mask(pec, X, Y, Z).ravel()
             pm = _mask(pmc, X, Y, Z).ravel()
             act = M.active[bi].ravel()
-            self.eps_cells.append(eps)
+            pec_raw.append(pc)
             self.mu_cells.append(mu)
             self.pec_cells.append(pc & act)
             e0, f0 = M.edge_off[bi], M.face_off[bi]
-            c, e, w = blk.cell_edges()
-            ok = act[c]
-            np.add.at(m_all, e0 + e[ok], EPS0 * eps[c[ok]] * w[ok])
-            bad = ok & pc[c]
+            c, e, _ = blk.cell_edges()
+            bad = act[c] & pc[c]
             pec_edge[e0 + e[bad]] = True
             # PMC cells: mu -> infinity, so they add nothing to the face Hodge
             # (the dual of PEC freezing the edges); faces with W = 0 are dropped
@@ -143,6 +152,16 @@ class SubgridFIT3D:
             norms.append(no)
             curls.append(blk.curl())
             divs.append(blk.divergence())
+        m_all, disp_spec, m_p_list = assemble_subgrid_media(
+            self,
+            eps_r,
+            pec_raw,
+            dispersive=dispersive,
+            averaging=averaging,
+            n_sub=n_sub,
+            normal=normal,
+            mutate=mutate,
+        )
         self.edge_mid = np.concatenate(mids)
         self.edge_len = np.concatenate(lens)
         self.edge_dir = np.concatenate(dirs)
@@ -223,9 +242,24 @@ class SubgridFIT3D:
         else:
             self.KH = self.K.conj().T.tocsr()
         self._lam_max = None
+        self._disp_dt_max = None
+        setup_dispersive_groups(self, disp_spec, m_p_list, mutate=mutate)
         if dt is None:
-            dt = cfl * self.dt_max
+            dtm = (
+                min(self.dt_max, self.dispersive_dt_max())
+                if self.dispersive_groups
+                else self.dt_max
+            )
+            dt = cfl * dtm
+        elif self.dispersive_groups and check_stability:
+            dtm = min(self.dt_max, self.dispersive_dt_max())
+            if float(dt) >= dtm * (1.0 - 1e-12):
+                raise ValueError(
+                    f"dt={float(dt):.4e} s is unstable (dispersive limit {dtm:.4e} s)"
+                )
         self.dt = float(dt)
+        if self.dispersive_groups:
+            update_dispersive_dt(self, self.dt, mutate=mutate)
         self.sources = []
         self.probes = []
         self.reset()
@@ -242,6 +276,12 @@ class SubgridFIT3D:
     def dt_max(self):
         """Stability limit 2 / sqrt(lambda_max) [s]."""
         return 2.0 / np.sqrt(self.lambda_max)
+
+    def dispersive_dt_max(self, tol=1e-12):
+        """Lossless dispersive stability limit ``2 / sqrt(lambda_max(M^-1 K))`` [s]."""
+        if self._disp_dt_max is None:
+            self._disp_dt_max = dispersive_dt_max(self, tol=tol)
+        return self._disp_dt_max
 
     def block_lambda_bounds(self):
         """
@@ -266,6 +306,10 @@ class SubgridFIT3D:
         self.b = np.zeros(self.n_faces, self.dtype)
         self.t = 0.0
         self.n = 0
+        for g in getattr(self, "dispersive_groups", ()):
+            m = g["idx"].size
+            g["p"] = [np.zeros(m, self.dtype) for _ in g["poles"]]
+            g["p_old"] = [np.zeros(m, self.dtype) for _ in g["poles"]]
         for p in self.probes:
             p["values"] = []
             if p["dft"] is not None:
@@ -282,6 +326,10 @@ class SubgridFIT3D:
 
     def energy(self, e_n, e_np1, b_half):
         """Discrete energy 1/2 b.W b + 1/2 e^n.D e^{n+1} [J]."""
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "energy() does not include dispersive poles; use dispersive_energy()"
+            )
         return float(
             0.5 * np.real(np.vdot(b_half, self.W * b_half))
             + 0.5 * np.real(np.vdot(e_n, self.D * e_np1))
@@ -395,12 +443,15 @@ class SubgridFIT3D:
     # ------------------------------------------------------------ stepping
     def one_step(self):
         dt = self.dt
+        e_n = self.e.copy() if self.dispersive_groups else None
         self.b -= dt * (self.K @ self.e)
         rhs = self.KH @ (self.W * self.b)
         s = self._source_vector(self.t + 0.5 * dt)
         if s is not None:
             rhs -= s
         self.e += dt * self.Dinv * rhs
+        if self.dispersive_groups:
+            step_dispersive(self, e_n)
         self.n += 1
         self.t = self.n * dt
 
@@ -415,14 +466,29 @@ class SubgridFIT3D:
             self.one_step()
             self._record()
             if energy:
-                hist.append(self.energy(e_old, self.e, self.b))
+                if self.dispersive_groups:
+                    hist.append(self.dispersive_energy(e_old, self.e))
+                else:
+                    hist.append(self.energy(e_old, self.e, self.b))
         return np.array(hist) if energy else None
+
+    def dispersive_energy(self, e0, e1, p0_list=None, p1_list=None):
+        """Conserved second-order energy of the lossless coupled ADE leapfrog."""
+        return dispersive_energy(self, e0, e1, p0_list=p0_list, p1_list=p1_list)
+
+    def dispersive_eigenfrequencies(self, k, f_guess):
+        """The `k` lowest semi-discrete resonances [Hz] of the dispersive pencil."""
+        return dispersive_eigenfrequencies(self, k, f_guess)
 
     def linear_step(self, b, e, i_all=None):
         """
         One step as a linear map of (b^{n-1/2}, e^n, i^{n+1/2} on all edges).
         Returns (b^{n+1/2}, e^{n+1}).
         """
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "linear_step() does not include dispersive poles; use SubgridLTSFIT3D.step_vec()"
+            )
         dt = self.dt
         b1 = b - dt * (self.K @ e)
         rhs = self.KH @ (self.W * b1)
@@ -435,6 +501,10 @@ class SubgridFIT3D:
         Exact transpose of `linear_step`: returns (bb, eb, ib_all) with
         <step(x), y> = <x, step_T(y)> (bilinear, no conjugation).
         """
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "linear_step_T() does not include dispersive poles; use SubgridLTSFIT3D.step_vec_T()"
+            )
         dt = self.dt
         g = self.Dinv * eb1
         bt = bb1 + dt * self.W * (self.KH.T @ g)
@@ -452,6 +522,10 @@ class SubgridFIT3D:
         The `k` lowest resonance frequencies above ``0.5 f_guess`` [Hz] of
         the semi-discrete operator (shift-invert Lanczos).
         """
+        if self.dispersive_groups:
+            raise NotImplementedError(
+                "eigenfrequencies() does not include dispersive poles; use dispersive_eigenfrequencies()"
+            )
         A, D = self.stiffness()
         sigma = (2 * np.pi * 0.5 * f_guess) ** 2
         # extra vectors: ARPACK can miss copies of (near-)degenerate modes

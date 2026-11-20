@@ -288,7 +288,7 @@ class UnstructuredAdjointStepper:
             self.pol = None
             self.kind = "cap" if s.hodge == "voronoi" else "whitney"
             self.pml = None
-            self.lts = None
+            self.lts = getattr(s, "lts", None)
             self.massless = s.massless.size > 0
             # spherical CFS-PML (pml3d.PML3D): the step is S4 S3 S2 S1 on the
             # extended state [u, b, z]; S3 is rebuilt for every permittivity
@@ -432,6 +432,11 @@ class UnstructuredAdjointStepper:
                     inc = np.unique(s.G[:, F].tocsc().nonzero()[0])
                     if np.isin(self.dofs, inc).any():
                         raise ValueError("design edges touch the LTS fine region")
+        elif self.lts is not None and self.lts.L > 0:
+            if np.isin(self.dofs, self.lts.levels[1].F).any():
+                raise NotImplementedError(
+                    "design cells touch the LTS fine region (F_1)"
+                )
 
     def _absorber_rate(self, pts):
         a = self.solver._absorber
@@ -703,7 +708,12 @@ class UnstructuredAdjointStepper:
         """`PML3D.apply` on [u, b, z] with this permittivity's S3 (bitwise)."""
         S1, S2, S3, S4 = self._pstages
         xe = np.concatenate([x["u"], x["b"], x["z"]])
-        y = S3 @ (S2 @ (S1 @ xe)) + self._pB @ src
+        s1 = S1 @ xe
+        if self.lts is not None:
+            L = self.pml3.layout
+            u = xe[L["u"]]
+            s1[L["b"]] += self.pml3._S_bu @ (self.lts.apply(u) - u)
+        y = S3 @ (S2 @ s1) + self._pB @ src
         y = S4 @ y
         nu, nf = x["u"].size, x["b"].size
         x1["u"], x1["b"], x1["z"] = y[:nu], y[nu : nu + nf], y[nu + nf :]
@@ -716,7 +726,12 @@ class UnstructuredAdjointStepper:
         y = T4 @ le
         nu, nf = xb1["u"].size, xb1["b"].size
         sens_full = y[:nu].copy()
-        z = T1 @ (T2 @ (T3 @ y))
+        w = T2 @ (T3 @ y)
+        z = T1 @ w
+        if self.lts is not None:
+            L = self.pml3.layout
+            sb = self.pml3._S_bu.T @ w[L["b"]]
+            z[L["u"]] += self.lts.apply_T(sb) - sb
         xb["u"], xb["b"], xb["z"] = z[:nu], z[nu : nu + nf], z[nu + nf :]
         return sens_full
 
@@ -725,8 +740,9 @@ class UnstructuredAdjointStepper:
             return self._step3d_pml(x, x1, src)
         s, dt = self.solver, self.dt
         u, b = x["u"], x["b"]
-        e_s = self._massless(u) if self.massless else None
-        b1 = b - dt * (s.Cf @ u)
+        z = u if self.lts is None else self.lts.apply(u)
+        e_s = self._massless(z) if self.massless else None
+        b1 = b - dt * (s.Cf @ z)
         if e_s is not None:
             b1 = b1 - dt * (s.Cs @ e_s)
         r = s.Cf.T @ (s.Mnu @ b1) - src
@@ -867,9 +883,15 @@ class UnstructuredAdjointStepper:
             ub = ub + self.ports.post_step_T(rb)
         b1b_tot = b1b + s.Mnu.T @ (s.Cf @ rb)
         xb["b"] = b1b_tot
-        ub = ub - dt * (s.Cf.T @ b1b_tot)
-        if self.massless:
-            ub = ub + self._massless_T(-dt * (s.Cs.T @ b1b_tot))
+        if self.lts is None:
+            ub = ub - dt * (s.Cf.T @ b1b_tot)
+            if self.massless:
+                ub = ub + self._massless_T(-dt * (s.Cs.T @ b1b_tot))
+        else:
+            zb = -dt * (s.Cf.T @ b1b_tot)
+            if self.massless:
+                zb = zb + self._massless_T(-dt * (s.Cs.T @ b1b_tot))
+            ub = ub + self.lts.apply_T(zb)
         xb["u"] = ub
         return None if self.design_cells is None else sens_full[self.dofs]
 

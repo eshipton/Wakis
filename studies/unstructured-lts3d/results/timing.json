@@ -1,0 +1,96 @@
+{
+  "env": {
+    "cpu_model": "Intel(R) Xeon(R) CPU @ 2.80GHz",
+    "python_version": "3.12.15",
+    "numpy_version": "2.5.5",
+    "scipy_version": "1.18.1",
+    "threads": {
+      "OMP_NUM_THREADS": "1",
+      "OPENBLAS_NUM_THREADS": "",
+      "MKL_NUM_THREADS": "",
+      "NUMEXPR_NUM_THREADS": ""
+    }
+  },
+  "timing": [
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "G",
+      "dt_s": 2.041209715567049e-11,
+      "wall_per_ns_median": 0.008402440900219283,
+      "wall_per_ns_min": 0.008362424107213015,
+      "wall_per_ns_max": 0.008625834572043162,
+      "speedup_vs_G": 1.0
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "G-imp",
+      "dt_s": 2.0441833047860933e-11,
+      "wall_per_ns_median": 0.008581998146765388,
+      "wall_per_ns_min": 0.00854132501674933,
+      "wall_per_ns_max": 0.008611910989313718,
+      "speedup_vs_G": 0.9790774545187031
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "G-ml3e-2",
+      "dt_s": 3.262933127420747e-11,
+      "wall_per_ns_median": 0.0066470078156777865,
+      "wall_per_ns_min": 0.006603398381738412,
+      "wall_per_ns_max": 0.006677700445925015,
+      "speedup_vs_G": 1.2640937295727397
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "L",
+      "dt_s": 1.2247258293402293e-10,
+      "wall_per_ns_median": 0.00406329407021832,
+      "wall_per_ns_min": 0.004038275790533856,
+      "wall_per_ns_max": 0.004108447958547113,
+      "speedup_vs_G": 2.067888947985451
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "L-dt1.5",
+      "dt_s": 3.061814573350573e-11,
+      "wall_per_ns_median": 0.006886197327834228,
+      "wall_per_ns_min": 0.006797297975241284,
+      "wall_per_ns_max": 0.006989436542936662,
+      "speedup_vs_G": 1.2201859023493782
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "L-dt2.0",
+      "dt_s": 4.082419431134098e-11,
+      "wall_per_ns_median": 0.006590397627481358,
+      "wall_per_ns_min": 0.006558646847782662,
+      "wall_per_ns_max": 0.006623352758365818,
+      "speedup_vs_G": 1.2749520400987446
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "GW",
+      "dt_s": 2.4550409043200527e-11,
+      "wall_per_ns_median": 0.03764894473679938,
+      "wall_per_ns_min": 0.0339732609695324,
+      "wall_per_ns_max": 0.03869656448472265,
+      "speedup_vs_G": 0.22317865637297524
+    },
+    {
+      "case": "C1_graded_box",
+      "size": 0.1,
+      "arm": "LW-edge_rate",
+      "dt_s": 6.427849956326483e-11,
+      "wall_per_ns_median": 0.019277364205537623,
+      "wall_per_ns_min": 0.017251769112031988,
+      "wall_per_ns_max": 0.01956786061507419,
+      "speedup_vs_G": 0.43587083849386393
+    }
+  ]
+}

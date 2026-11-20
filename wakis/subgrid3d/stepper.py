@@ -23,6 +23,7 @@ import numpy as np
 
 from .gpu import BlockOps, get_xp
 from .lts import SubgridLTS, lts_dt_max, stability_ratio
+from .media import step_dispersive, update_dispersive_dt
 from .pml import SubgridCPML
 from .solver import SubgridFIT3D
 
@@ -58,11 +59,20 @@ class SubgridLTSFIT3D(SubgridFIT3D):
     def __init__(self, mesh, eps_r=None, mu_r=None, pec=None, pmc=None, dt=None, cfl=0.95,
                  lts=True, nu=0.05, lts_kw=None, pml=None, kernels="csr", backend="numpy",
                  dt_rtol=2e-3, **kw):  # fmt: skip
-        super().__init__(mesh, eps_r=eps_r, mu_r=mu_r, pec=pec, pmc=pmc, dt=dt, cfl=cfl, **kw)
+        super().__init__(
+            mesh, eps_r=eps_r, mu_r=mu_r, pec=pec, pmc=pmc, dt=dt, cfl=cfl, **kw
+        )
         self.cfl = cfl
         self.lts = None
         self.lts_info = {}
         lts_kw = dict(lts_kw or {})
+        if self.dispersive_groups:
+            if backend not in ("numpy", "cpu", None):
+                raise NotImplementedError(
+                    "CuPy backend does not support dispersive media"
+                )
+            if lts and max(self.mesh.level) > 0:
+                raise NotImplementedError("LTS with dispersive media is not supported")
         if lts and max(self.mesh.level) > 0:
             from .lts import is_stable
 
@@ -172,6 +182,10 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         if self.cpml is not None:
             self.psi = [xp.zeros(p["pf"].size, self.dtype) for p in self._pml]
             self.phi = [xp.zeros(p["pe"].size, self.dtype) for p in self._pml]
+        for g in getattr(self, "dispersive_groups", ()):
+            m = g["idx"].size
+            g["p"] = [np.zeros(m, self.dtype) for _ in g["poles"]]
+            g["p_old"] = [np.zeros(m, self.dtype) for _ in g["poles"]]
         for p in self.probes:
             p["values"] = []
             if p["dft"] is not None:
@@ -188,6 +202,7 @@ class SubgridLTSFIT3D(SubgridFIT3D):
     # ------------------------------------------------------------ stepping
     def one_step(self):
         dt, xp = self.dt, self.xp
+        e_n = self.e.copy() if self.dispersive_groups else None
         z = self._R(self.e)
         Kz = self._Kz(z)
         if self.cpml is not None:
@@ -205,6 +220,8 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         if s is not None:
             rhs -= xp.asarray(s)
         self.e += dt * self._Dinv * rhs
+        if self.dispersive_groups:
+            step_dispersive(self, e_n)
         self.n += 1
         self.t = self.n * dt
 
@@ -212,7 +229,11 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         for p in self.probes:
             row = p["row"]
             v = (row.data * self.e[row.indices]).sum()
-            v = complex(v) if np.iscomplexobj(row.data) or self.dtype is complex else float(v)
+            v = (
+                complex(v)
+                if np.iscomplexobj(row.data) or self.dtype is complex
+                else float(v)
+            )
             v = v / p["L"]
             p["values"].append(v)
             if p["dft"] is not None:
@@ -247,11 +268,17 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         source-free: ``1/2 [w^H (D - dt^2/4 S_0) w + ybar^H S_0 ybar]``,
         ``w = (e1 - e0)/dt``, ``ybar = (e1 + e0)/2`` [J/s^2].
         """
+        if self.dispersive_groups:
+            return self.dispersive_energy(e0, e1)
         xp, dt = self.xp, self.dt
         w = (e1 - e0) / dt
         yb = 0.5 * (e1 + e0)
         D = 1.0 / self._Dinv
-        val = xp.vdot(w, D * w) - dt**2 / 4 * xp.vdot(w, self.S0(w)) + xp.vdot(yb, self.S0(yb))
+        val = (
+            xp.vdot(w, D * w)
+            - dt**2 / 4 * xp.vdot(w, self.S0(w))
+            + xp.vdot(yb, self.S0(yb))
+        )
         val = val.item() if hasattr(val, "item") else val
         return float(0.5 * np.real(val))
 
@@ -269,7 +296,13 @@ class SubgridLTSFIT3D(SubgridFIT3D):
     def _layout(self):
         sizes = [self._nb, self.n_free]
         if self.cpml is not None:
-            sizes += [p["pf"].size for p in self._pml] + [p["pe"].size for p in self._pml]
+            sizes += [p["pf"].size for p in self._pml] + [
+                p["pe"].size for p in self._pml
+            ]
+        for g in getattr(self, "dispersive_groups", ()):
+            m = g["idx"].size
+            for _ in g["poles"]:
+                sizes += [m, m]
         return np.concatenate([[0], np.cumsum(sizes)]).astype(int)
 
     @property
@@ -287,8 +320,8 @@ class SubgridLTSFIT3D(SubgridFIT3D):
     def step_vec(self, x, i_all=None):
         """
         One step as a linear map of the packed state
-        ``x = [b^{n-1/2}, e^n, psi_0..2, phi_0..2]`` and the source
-        ``i^{n+1/2}`` on all edges (NumPy, either kernels).
+        ``x = [b^{n-1/2}, e^n, psi_0..2, phi_0..2, p_{k,p}^n, p_{k,p}^{n-1}, ...]``
+        and the source ``i^{n+1/2}`` on all edges (NumPy, either kernels).
         """
         if self.xp is not np:
             raise NotImplementedError("step_vec: NumPy backend only")
@@ -311,8 +344,24 @@ class SubgridLTSFIT3D(SubgridFIT3D):
                 rhs[p["pe"]] += phi1[d]
         if i_all is not None:
             rhs = rhs - self.P.conj().T @ i_all
-        e1 = e + dt * self._Dinv * rhs
-        return np.concatenate([b1, e1] + psi1 + phi1)
+        e1 = (e + dt * self._Dinv * rhs).copy()
+        p_out = []
+        if self.dispersive_groups:
+            o = self._layout()
+            k_part = 8 if self.cpml is not None else 2
+            for g in self.dispersive_groups:
+                idx = g["idx"]
+                en = e[idx]
+                dp = np.zeros(idx.size, dtype=x.dtype)
+                for alpha, xi, zeta in g["coef"]:
+                    pn = x[o[k_part] : o[k_part + 1]]
+                    pm1 = x[o[k_part + 1] : o[k_part + 2]]
+                    k_part += 2
+                    p_new = alpha * pn + xi * pm1 + zeta * en
+                    dp = dp + (p_new - pn)
+                    p_out.extend([p_new, pn.copy()])
+                e1[idx] = e1[idx] - g["ratio"] * dp
+        return np.concatenate([b1, e1] + psi1 + phi1 + p_out)
 
     def step_vec_T(self, y):
         """
@@ -324,7 +373,7 @@ class SubgridLTSFIT3D(SubgridFIT3D):
         dt = self.dt
         bb1, eb1, psib1, phib1 = self._split(y)
         ge = dt * self._Dinv * eb1
-        # e1 = e + dt Dinv (KH Wb1 + sum T_d phi1_d - P^H i)
+        # e1 = e + dt Dinv (KH Wb1 + sum T_d phi1_d - P^H i) - sum_k r_k (p^{n+1} - p^n)
         ybar = self._KH_T(ge)
         phib = []
         if self.cpml is not None:
@@ -340,9 +389,27 @@ class SubgridLTSFIT3D(SubgridFIT3D):
                 tot = psib1[d] - dt * b1bar[p["pf"]]
                 psib.append(p["bh"] * tot)
                 zbar = zbar + p["Kf"].T @ (p["ah"] * tot)
-        ebar = eb1 + (zbar if self.lts is None else self.lts.apply_T(zbar))
+        p_bar = []
+        ebar_ade = np.zeros(self.n_free, dtype=y.dtype)
+        if self.dispersive_groups:
+            o = self._layout()
+            k_part = 8 if self.cpml is not None else 2
+            for g in self.dispersive_groups:
+                idx = g["idx"]
+                r_eb1 = g["ratio"] * eb1[idx]
+                if self.mutate == "ade_transpose_no_feedback":
+                    r_eb1 = 0.0 * r_eb1
+                for alpha, xi, zeta in g["coef"]:
+                    pb_new = y[o[k_part] : o[k_part + 1]]
+                    pb_old = y[o[k_part + 1] : o[k_part + 2]]
+                    k_part += 2
+                    q = pb_new - r_eb1
+                    p_bar.append(alpha * q + r_eb1 + pb_old)
+                    p_bar.append(xi * q)
+                    ebar_ade[idx] = ebar_ade[idx] + zeta * q
+        ebar = eb1 + ebar_ade + (zbar if self.lts is None else self.lts.apply_T(zbar))
         ibar = -(self.P.conj() @ ge)
-        return np.concatenate([b1bar, ebar] + psib + phib), ibar
+        return np.concatenate([b1bar, ebar] + psib + phib + p_bar), ibar
 
     def _K_T(self, y):
         """``K^T y`` (bilinear transpose of `_Kz`)."""
