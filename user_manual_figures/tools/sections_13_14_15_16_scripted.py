@@ -27,9 +27,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from scipy.constants import c as c_light  # noqa: E402
+from scipy.constants import epsilon_0 as eps_0  # noqa: E402
+from scipy.special import i0, i1, k0, k1  # noqa: E402
 
 from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
 from wakis.inverse import projection as ssp  # noqa: E402
+from wakis.plasma import linear_wake, pipe_green_function, plasma_frequency, plasma_wavelength  # noqa: E402
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
 ORANGE, LORANGE = "#e8873a", "#fbe0c8"
@@ -626,8 +629,226 @@ def fig14_2_tete_dispersion(out_root):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 14.3
+def fig14_3_cold_plasma_wake(out_root):
+    """Figure 14.3: Linear cold-plasma wakefield in a cylindrical PEC pipe (wakis.plasma).
+
+    Source lines in user_manual.md: 2537, 2539, 2541-2546, 2550, 2553, 2554, 2558, 2559.
+    """
+    out_dir = out_root / "section14"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Exact benchmark parameters from user_manual.md lines 2553-2559
+    n_e = 1.0e20  # m^-3 (line 2553)
+    wp = float(plasma_frequency(n_e))  # 5.64e11 rad/s (line 2554)
+    k_p = wp / c_light  # line 2537, 2559
+    lam_p = float(plasma_wavelength(wp))  # 2*pi/k_p = 3.34 mm (line 2554)
+    sigmaz = 0.5e-3  # m (line 2559)
+    q = -1.0e-9  # C (line 2559)
+    r_obs = 0.2e-3  # m (line 2559)
+    a = 2.0e-3  # m (line 2559)
+
+    assert np.isclose(wp, 5.64e11, rtol=2e-3)
+    assert np.isclose(lam_p * 1e3, 3.34, rtol=2e-3)
+
+    # Left panel curves: r in [0.05e-3, a] (r/a in [0.025, 1.0])
+    r = np.linspace(0.05e-3, a, 400)
+    r_over_a = r / a
+    g_free = k0(k_p * r)
+    g_pipe = pipe_green_function(r, 0.0, k_p, radius=a)
+    g_formula = k0(k_p * r) - (k0(k_p * a) / i0(k_p * a)) * i0(k_p * r)  # line 2546 (m = 0 on-axis)
+    minus_dg_dr_norm = k1(k_p * r) + (k0(k_p * a) / i0(k_p * a)) * i1(k_p * r)
+
+    # Mathematical assertions for Green's function (Panel 1)
+    assert np.allclose(g_pipe, g_formula, rtol=1e-12, atol=1e-14)
+    assert abs(pipe_green_function(a, 0.0, k_p, radius=a)) < 1e-14  # vanishes on PEC pipe wall r = a
+    h_fd = 1e-8
+    dg_fd = (pipe_green_function(r + h_fd, 0.0, k_p, radius=a) - pipe_green_function(r - h_fd, 0.0, k_p, radius=a)) / (
+        2.0 * h_fd
+    )
+    assert np.allclose(-dg_fd / k_p, minus_dg_dr_norm, rtol=1e-7)
+
+    # Right panel curves: xi in [-6.0, 2.0] mm (user_manual.md lines 2558-2559)
+    xi = np.linspace(-6.0e-3, 2.0e-3, 401)
+    Ez, Fx, Fy = linear_wake(r_obs, 0.0, xi, k_p=k_p, sigmaz=sigmaz, q=q, radius=a)
+    assert np.allclose(Fy, 0.0, atol=1e-12)
+
+    # Cross-check against direct quadrature of the integrals in user_manual.md lines 2542-2543
+    xi_prime = np.linspace(-6.0e-3, 6.0e-3, 2401)
+    lam_qp = (q / (np.sqrt(2.0 * np.pi) * sigmaz)) * np.exp(-0.5 * (xi_prime / sigmaz) ** 2)
+    g_r = float(pipe_green_function(r_obs, 0.0, k_p, radius=a))
+    dg_dx = float(-k_p * (k1(k_p * r_obs) + (k0(k_p * a) / i0(k_p * a)) * i1(k_p * r_obs)))
+    for idx_check in (40, 120, 200):
+        xi_c = xi[idx_check]
+        mask = xi_prime >= xi_c
+        ez_quad = -(k_p**2 / (2.0 * np.pi * eps_0)) * g_r * np.trapezoid(
+            lam_qp[mask] * np.cos(k_p * (xi_c - xi_prime[mask])), xi_prime[mask]
+        )
+        fx_quad = (k_p / (2.0 * np.pi * eps_0)) * dg_dx * np.trapezoid(
+            lam_qp[mask] * np.sin(k_p * (xi_prime[mask] - xi_c)), xi_prime[mask]
+        )
+        assert np.isclose(Ez[idx_check], ez_quad, rtol=2e-4)
+        assert np.isclose(Fx[idx_check], fx_quad, rtol=2e-4)
+
+    # Assert Panofsky-Wenzel / pi/2 phase quadrature behind the drive bunch (xi <= -2 mm):
+    # d E_z / d xi = -k_p (g / (dg/dx)) * k_p^2 ... -> (1 / g_r) E_z and (-k_p / dg_dx) F_x have equal amplitude
+    behind = xi <= -2.5e-3
+    amp_ez = np.max(np.abs(Ez[behind])) / g_r
+    amp_fx = np.max(np.abs(Fx[behind])) * k_p / abs(dg_dx)
+    assert np.isclose(amp_ez, amp_fx, rtol=5e-3)
+
+    fig = plt.figure(figsize=(W, H))
+    fig.add_artist(plt.Line2D([0.415, 0.415], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.5))
+
+    # ---- LEFT PANEL (42% width): Screened pipe Green's function g(r; 0) -----
+    fig.text(0.21, 0.93, "Screened pipe Green's function g(r; 0)", ha="center", fontsize=16.5, weight="bold")
+    ax1 = fig.add_axes([0.06, 0.14, 0.325, 0.72])
+    clean_axes(ax1)
+
+    ax1.plot(r_over_a, g_free, color=GREY, lw=2.2, ls="--", label=r"unscreened $K_0(k_p r)$", zorder=3)
+    ax1.plot(
+        r_over_a,
+        g_pipe,
+        color=GREEN,
+        lw=2.8,
+        label=r"$g(r; 0) = K_0(k_p r) - [K_0(k_p a)/I_0(k_p a)]\,I_0(k_p r)$",
+        zorder=4,
+    )
+    ax1.plot(r_over_a, minus_dg_dr_norm, color=ORANGE, lw=2.4, label=r"$-\,\mathrm{d}g/\mathrm{d}r\, /\, k_p$", zorder=4)
+
+    # Sampling radius r = 0.2 mm (r/a = 0.1)
+    ax1.axvline(r_obs / a, color=BLUE, lw=1.6, ls=":")
+    ax1.text(
+        r_obs / a + 0.025,
+        2.55,
+        "r = 0.2 mm",
+        color=BLUE,
+        fontsize=11.5,
+        weight="bold",
+        ha="left",
+        va="center",
+    )
+
+    # PEC pipe boundary at r / a = 1 with dark grey hatching
+    ax1.axvspan(1.0, 1.07, facecolor=LGREY, edgecolor=GREY, hatch="///", lw=1.2, zorder=3)
+    ax1.axvline(1.0, color=GREY, lw=2.2, zorder=4)
+    ax1.plot([1.0], [0.0], "o", color=GREEN, ms=7, zorder=5)
+    ax1.text(
+        0.965,
+        0.95,
+        "PEC wall r = a\n(g = 0)",
+        color=GREY,
+        fontsize=11.5,
+        weight="bold",
+        ha="right",
+        va="center",
+        bbox=dict(boxstyle="round,pad=0.22", fc="white", ec=GREY, lw=1.0, alpha=0.92),
+    )
+
+    ax1.set_xlim(0.0, 1.07)
+    ax1.set_ylim(-0.15, 3.65)
+    ax1.set_xticks([0.0, 0.1, 0.5, 1.0])
+    ax1.set_xticklabels(["0", "0.1", "0.5", "1.0"], fontsize=12.5)
+    ax1.set_yticks([0.0, 1.0, 2.0, 3.0])
+    ax1.set_xlabel(r"normalized radius $r / a$ ($a = 2.0\ \mathrm{mm}$)", fontsize=13)
+    ax1.set_ylabel("Green's function & radial slope", fontsize=13)
+    ax1.legend(loc="upper right", bbox_to_anchor=(0.92, 0.99), frameon=False, fontsize=10.2)
+
+    # ---- RIGHT PANEL (58% width): Co-moving wake E_z(r, xi) and F_x(r, xi) --
+    fig.text(0.71, 0.93, "Co-moving wake E_z(r, ξ) and F_x(r, ξ)", ha="center", fontsize=16.5, weight="bold")
+    ax2 = fig.add_axes([0.495, 0.14, 0.47, 0.72])
+    clean_axes(ax2)
+
+    xi_mm = xi * 1e3
+    ez_mv_m = Ez * 1e-6  # MV/m
+    fx_mv_m = Fx * 1e-6  # MV/m
+
+    # Shaded grey drive-bunch profile lambda(xi) centred at xi = 0
+    bunch_profile = np.exp(-0.5 * (xi / sigmaz) ** 2) * (0.82 * np.max(np.abs(fx_mv_m)))
+    ax2.fill_between(xi_mm, 0.0, bunch_profile, color=LGREY, edgecolor=GREY, lw=1.3, alpha=0.8, zorder=1)
+    ax2.text(
+        0.55,
+        bunch_profile.max() + 18.0,
+        "drive bunch σ_z = 0.5 mm, v = c",
+        color=GREY,
+        fontsize=11.2,
+        weight="bold",
+        ha="center",
+        va="bottom",
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=GREY, lw=1.0, alpha=0.94),
+    )
+
+    ax2.axhline(0.0, color=GREY, lw=1.0, alpha=0.6)
+    ax2.plot(xi_mm, ez_mv_m, color=BLUE, lw=2.8, label=r"$E_z \sim \cos(k_p(\xi - \xi'))$", zorder=4)
+    ax2.plot(xi_mm, fx_mv_m, color=ORANGE, lw=2.6, label=r"$F_\perp \sim \sin(k_p(\xi' - \xi))$", zorder=4)
+
+    # Find the two positive peaks of F_x behind the bunch to mark lambda_p = 2*pi/k_p = 3.34 mm
+    m_p1 = (xi_mm > -1.5) & (xi_mm < 0.2)
+    idx_fx1 = int(np.flatnonzero(m_p1)[np.argmax(fx_mv_m[m_p1])])
+    x_fx1 = float(xi_mm[idx_fx1])
+    x_fx2 = x_fx1 - lam_p * 1e3
+    y_fx_peak = float(fx_mv_m[idx_fx1])
+    y_arrow = y_fx_peak + 20.0
+
+    ax2.plot([x_fx1, x_fx1], [y_fx_peak, y_arrow + 5.0], color=GREEN, lw=1.4, ls=":")
+    ax2.plot([x_fx2, x_fx2], [y_fx_peak, y_arrow + 5.0], color=GREEN, lw=1.4, ls=":")
+    ax2.annotate(
+        "",
+        xy=(x_fx1, y_arrow),
+        xytext=(x_fx2, y_arrow),
+        arrowprops=dict(arrowstyle="<|-|>", color=GREEN, lw=2.2, mutation_scale=16),
+    )
+    ax2.text(
+        0.5 * (x_fx1 + x_fx2),
+        y_arrow + 6.0,
+        "λ_p = 2π / k_p = 3.34 mm",
+        color=GREEN,
+        fontsize=12.0,
+        weight="bold",
+        ha="center",
+        va="bottom",
+    )
+
+    # Mark pi/2 phase quadrature between E_z peak and F_x peak (quarter wavelength lambda_p / 4)
+    m_ez = (xi_mm > -4.0) & (xi_mm < -2.0)
+    idx_ez1 = int(np.flatnonzero(m_ez)[np.argmax(ez_mv_m[m_ez])])
+    x_ez1 = float(xi_mm[idx_ez1])
+    y_q = -112.0
+    ax2.plot([x_ez1, x_ez1], [ez_mv_m[idx_ez1], y_q], color=GREY, lw=1.2, ls="--")
+    ax2.plot([x_fx2, x_fx2], [fx_mv_m[idx_fx1], y_q], color=GREY, lw=1.2, ls="--")
+    ax2.annotate(
+        "",
+        xy=(x_ez1, y_q),
+        xytext=(x_fx2, y_q),
+        arrowprops=dict(arrowstyle="<|-|>", color=GREY, lw=1.8, mutation_scale=13),
+    )
+    ax2.text(
+        0.5 * (x_ez1 + x_fx2),
+        y_q - 8.0,
+        "π/2 phase offset",
+        color=GREY,
+        fontsize=11.5,
+        weight="bold",
+        ha="center",
+        va="top",
+        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=GREY, lw=1.0, alpha=0.94),
+    )
+
+    ax2.set_xlim(-6.0, 2.0)
+    ax2.set_ylim(-155.0, 160.0)
+    ax2.set_xticks([-6.0, -4.0, -2.0, 0.0, 2.0])
+    ax2.set_yticks([-100, -50, 0, 50, 100, 150])
+    ax2.set_xlabel(r"co-moving coordinate $\xi = z - ct\ [\mathrm{mm}]$", fontsize=13)
+    ax2.set_ylabel(r"wakefield $E_z,\ F_x\ [\mathrm{MV/m}]$ at $r = 0.2\ \mathrm{mm}$", fontsize=13)
+    ax2.legend(loc="lower right", frameon=False, fontsize=11.5)
+
+    fig.savefig(out_dir / "fig14_3_cold_plasma_wake.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     out_root = Path(sys.argv[1])
     out_root.mkdir(parents=True, exist_ok=True)
     fig13_4_subpixel_smoothed_projection(out_root)
     fig14_2_tete_dispersion(out_root)
+    fig14_3_cold_plasma_wake(out_root)
