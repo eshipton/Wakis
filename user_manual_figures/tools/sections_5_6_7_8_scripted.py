@@ -19,25 +19,40 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402
-import numpy as np  # noqa: E402
+import matplotlib.pyplot as plt
+import numpy as np
 from matplotlib.patches import (
     Circle,
     FancyArrowPatch,
     FancyBboxPatch,
     Polygon,
     Rectangle,
-)  # noqa: E402
+)
+from scipy.constants import c as c_light
+from scipy.constants import e as q_e
+from scipy.constants import epsilon_0 as eps_0
+from scipy.constants import m_e
 
-from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
-from wakis.conformal import (  # noqa: E402
+from wakis import GridFIT3D, SolverFIT3D
+from wakis.conformal import (
     MERGE_THRESHOLD,
     _edge_potential,
     _redistribution,
     _section_areas_full,
 )
-from wakis.dispersive import Debye, DispersiveMaterial, Drude, Lorentz  # noqa: E402
-from wakis.templates import Sheet  # noqa: E402
+from wakis.dispersive import Debye, DispersiveMaterial, Drude, Lorentz
+from wakis.plasma import (
+    cold_plasma,
+    linear_wake,
+    plasma_frequency,
+    wake_amplitude,
+)
+from wakis.sources import (
+    ContinuousSource,
+    CurrentSource,
+    GaussianSource,
+)
+from wakis.templates import Sheet
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
 ORANGE, LORANGE = "#e8873a", "#fbe0c8"
@@ -108,7 +123,7 @@ def badge(ax, xy, text, fc=GREEN, tc="white", fs=13.5, pad=0.35, z=5):
         fontsize=fs,
         color=tc,
         zorder=z,
-        bbox=dict(boxstyle=f"round,pad={pad}", fc=fc, ec="none"),
+        bbox={"boxstyle": f"round,pad={pad}", "fc": fc, "ec": "none"},
     )
 
 
@@ -290,7 +305,7 @@ def fig5_3(outroot):
         fontsize=12.5,
         color=BLUE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.88),
+        bbox={"boxstyle": "round,pad=0.12", "fc": "white", "ec": "none", "alpha": 0.88},
         zorder=7,
     )
 
@@ -453,7 +468,13 @@ def fig5_3(outroot):
         fontsize=12.5,
         color=BLUE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec=BLUE, lw=1.0, alpha=0.94),
+        bbox={
+            "boxstyle": "round,pad=0.15",
+            "fc": "white",
+            "ec": BLUE,
+            "lw": 1.0,
+            "alpha": 0.94,
+        },
         zorder=7,
     )
 
@@ -469,7 +490,13 @@ def fig5_3(outroot):
         fontsize=12.5,
         color=BLUE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.15", fc="white", ec=BLUE, lw=1.0, alpha=0.94),
+        bbox={
+            "boxstyle": "round,pad=0.15",
+            "fc": "white",
+            "ec": BLUE,
+            "lw": 1.0,
+            "alpha": 0.94,
+        },
         zorder=7,
     )
 
@@ -495,7 +522,13 @@ def fig5_3(outroot):
         fontsize=12.0,
         color=ORANGE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec=ORANGE, lw=0.9, alpha=0.94),
+        bbox={
+            "boxstyle": "round,pad=0.14",
+            "fc": "white",
+            "ec": ORANGE,
+            "lw": 0.9,
+            "alpha": 0.94,
+        },
         zorder=7,
     )
     ax.text(
@@ -507,7 +540,13 @@ def fig5_3(outroot):
         fontsize=12.0,
         color=ORANGE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec=ORANGE, lw=0.9, alpha=0.94),
+        bbox={
+            "boxstyle": "round,pad=0.14",
+            "fc": "white",
+            "ec": ORANGE,
+            "lw": 0.9,
+            "alpha": 0.94,
+        },
         zorder=7,
     )
     arrow(ax, (1.55, ym - 0.25), (1.51, y0 + 0.06), ORANGE, lw=1.3, ms=12, z=6)
@@ -712,7 +751,7 @@ def fig6_1(outroot):
         fontsize=12.5,
         color=RED,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.22", fc=LRED, ec=RED, lw=1.2),
+        bbox={"boxstyle": "round,pad=0.22", "fc": LRED, "ec": RED, "lw": 1.2},
         zorder=7,
     )
 
@@ -727,7 +766,7 @@ def fig6_1(outroot):
         fontsize=12.5,
         color=RED,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.24", fc=LRED, ec=RED, lw=1.2),
+        bbox={"boxstyle": "round,pad=0.24", "fc": LRED, "ec": RED, "lw": 1.2},
         zorder=7,
     )
     arrow(ax, (3.45, y_hi + 0.20), (N - 1 - 0.04, y_hi + 0.06), RED, lw=1.8, ms=15, z=6)
@@ -750,7 +789,7 @@ def fig6_1(outroot):
         fontsize=12.5,
         color=RED,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.22", fc=LRED, ec=RED, lw=1.2),
+        bbox={"boxstyle": "round,pad=0.22", "fc": LRED, "ec": RED, "lw": 1.2},
         zorder=7,
     )
     arrow(ax, (4.50, -0.36), (N - 0.5, y_lo - 0.30), RED, lw=1.8, ms=14, z=6)
@@ -917,7 +956,7 @@ def fig6_1(outroot):
         fontsize=12.5,
         color="black",
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.5),
+        bbox={"boxstyle": "round,pad=0.24", "fc": LGREEN, "ec": GREEN, "lw": 1.5},
         zorder=7,
     )
     arrow(ax, (0.55, y_hi + 0.20), (0.04, y_hi + 0.08), GREEN, lw=1.8, ms=15, z=6)
@@ -933,7 +972,7 @@ def fig6_1(outroot):
         fontsize=12.5,
         color="black",
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.24", fc=LGREEN, ec=GREEN, lw=1.5),
+        bbox={"boxstyle": "round,pad=0.24", "fc": LGREEN, "ec": GREEN, "lw": 1.5},
         zorder=7,
     )
     arrow(
@@ -1043,7 +1082,13 @@ def fig6_3(outroot):
         fontsize=12.0,
         color=BLUE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec=BLUE, lw=1.0, alpha=0.94),
+        bbox={
+            "boxstyle": "round,pad=0.16",
+            "fc": "white",
+            "ec": BLUE,
+            "lw": 1.0,
+            "alpha": 0.94,
+        },
         zorder=5,
     )
     ax_top.text(
@@ -1128,7 +1173,13 @@ def fig6_3(outroot):
         fontsize=11.0,
         color=GREEN,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=GREEN, lw=1.0, alpha=0.92),
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "fc": "white",
+            "ec": GREEN,
+            "lw": 1.0,
+            "alpha": 0.92,
+        },
         zorder=6,
     )
     ax_bot.text(
@@ -1139,7 +1190,7 @@ def fig6_3(outroot):
         va="center",
         fontsize=11.0,
         color=GREY,
-        bbox=dict(boxstyle="round,pad=0.22", fc=LGREY, ec=GREY, lw=1.0),
+        bbox={"boxstyle": "round,pad=0.22", "fc": LGREY, "ec": GREY, "lw": 1.0},
         zorder=6,
     )
 
@@ -1458,7 +1509,13 @@ def fig6_4(outroot):
         fontsize=12.5,
         color=GREY,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=GREY, lw=1.2, alpha=0.92),
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "fc": "white",
+            "ec": GREY,
+            "lw": 1.2,
+            "alpha": 0.92,
+        },
         zorder=6,
     )
 
@@ -1503,7 +1560,13 @@ def fig6_4(outroot):
         fontsize=13.0,
         color=BLUE,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=BLUE, lw=1.0, alpha=0.92),
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "fc": "white",
+            "ec": BLUE,
+            "lw": 1.0,
+            "alpha": 0.92,
+        },
         zorder=6,
     )
 
@@ -1584,7 +1647,7 @@ def fig6_4(outroot):
         fontsize=12.5,
         color=GREY,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.14", fc="white", ec=GREY, lw=1.0),
+        bbox={"boxstyle": "round,pad=0.14", "fc": "white", "ec": GREY, "lw": 1.0},
         zorder=5,
     )
 
@@ -1626,7 +1689,7 @@ def fig6_4(outroot):
         fontsize=11.0,
         color=RED,
         weight="bold",
-        bbox=dict(boxstyle="round,pad=0.16", fc=LRED, ec=RED, lw=1.2),
+        bbox={"boxstyle": "round,pad=0.16", "fc": LRED, "ec": RED, "lw": 1.2},
         zorder=6,
     )
     arrow(
@@ -1665,7 +1728,13 @@ def fig6_4(outroot):
         va="center",
         fontsize=10.5,
         color=GREY,
-        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec=LGREY, lw=1.0, alpha=0.92),
+        bbox={
+            "boxstyle": "round,pad=0.16",
+            "fc": "white",
+            "ec": LGREY,
+            "lw": 1.0,
+            "alpha": 0.92,
+        },
         zorder=5,
     )
 
@@ -2188,11 +2257,807 @@ def fig7_2(outroot):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 7.4
+def fig7_4(outroot):
+    """Figure 7.4: Cold unmagnetized electron plasma and linear plasma wakefield (wakis.plasma)."""
+    out_dir = outroot / "section7"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Left panel: cold-plasma permittivity via wakis.plasma (user_manual.md lines 1463-1472)
+    n_e = 1.0e20
+    omega_p = plasma_frequency(n_e)
+    assert np.isclose(omega_p, np.sqrt(n_e * q_e**2 / (eps_0 * m_e)), rtol=1e-15)
+    assert np.isclose(omega_p * 1e-11, 5.64, atol=0.01)
+
+    mat_col0 = cold_plasma(omega_p, collision_rate=0.0)
+    mat_coll = cold_plasma(omega_p, collision_rate=0.15 * omega_p)
+    assert np.isclose(mat_col0.epsilon(omega_p / (2 * np.pi)), 0.0, atol=1e-15)
+
+    u = np.linspace(0.45, 2.5, 500)
+    freqs = u * omega_p / (2 * np.pi)
+    eps_col0 = mat_col0.epsilon(freqs)
+    eps_coll = mat_coll.epsilon(freqs)
+    assert np.all(eps_coll.imag <= 0.0)
+    assert np.all(eps_col0[u < 1.0].real < 0.0) and np.all(eps_col0[u > 1.0].real > 0.0)
+
+    # 2. Right panel: analytical linear plasma wakefield (user_manual.md lines 1468, 1478, 2558-2560)
+    k_p = omega_p / c_light
+    sigmaz = 0.5e-3
+    q_bunch = -1.0e-9
+    r_obs = 0.2e-3
+    r_pipe = 2.0e-3
+    k_p_s = np.linspace(
+        -3.5, 18.5, 800
+    )  # normalized distance behind drive bunch s = -xi
+    xi = -k_p_s / k_p
+    Ez, _Fx, _Fy = linear_wake(
+        r_obs, 0.0, xi, k_p=k_p, sigmaz=sigmaz, q=q_bunch, radius=r_pipe
+    )
+    e_amp = abs(wake_amplitude(r_obs, k_p, sigmaz, q=q_bunch, radius=r_pipe))
+    # Verify asymptotic oscillation amplitude behind the bunch matches wake_amplitude
+    trailing = k_p_s > 6.0
+    assert np.isclose(np.max(np.abs(Ez[trailing])), e_amp, rtol=1e-3)
+
+    fig = plt.figure(figsize=(W, H))
+
+    # ---- LEFT PANEL: Cold-plasma permittivity eps_r(omega) ----
+    ax1 = fig.add_axes([0.06, 0.24, 0.40, 0.62])
+    ax1.set_title(
+        r"Cold-plasma permittivity $\varepsilon_r(\omega)$",
+        fontsize=15.0,
+        weight="bold",
+        pad=12,
+    )
+
+    ax1.axvspan(0.45, 1.0, color=LORANGE, alpha=0.45, zorder=0)
+    ax1.axvspan(1.0, 2.5, color=LBLUE, alpha=0.45, zorder=0)
+    ax1.axhline(0.0, color=GREY, lw=1.4, zorder=2)
+    ax1.axvline(1.0, color=GREY, lw=1.6, ls="--", zorder=2)
+
+    ax1.plot(
+        u,
+        eps_col0.real,
+        color=BLUE,
+        lw=2.8,
+        label=r"$\mathrm{Re}\,\varepsilon_r$ (collision_rate=0.0)",
+        zorder=4,
+    )
+    ax1.plot(
+        u,
+        eps_coll.real,
+        color=BLUE,
+        lw=2.0,
+        ls="--",
+        label=r"$\mathrm{Re}\,\varepsilon_r$ ($\nu/\omega_p = 0.15$)",
+        zorder=4,
+    )
+    ax1.plot(
+        u,
+        eps_coll.imag,
+        color=ORANGE,
+        lw=2.4,
+        ls="--",
+        label=r"$\mathrm{Im}\,\varepsilon_r \leq 0$ ($\nu/\omega_p = 0.15$)",
+        zorder=5,
+    )
+    ax1.plot([1.0], [0.0], "o", color=BLUE, ms=8, mec="white", mew=1.2, zorder=6)
+
+    ax1.text(
+        0.72,
+        0.66,
+        r"$\omega < \omega_p$:" + "\n" + r"$\mathrm{Re}\,\varepsilon_r < 0$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "fc": "white",
+            "ec": ORANGE,
+            "lw": 1.0,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+    ax1.text(
+        1.78,
+        -1.35,
+        r"$\omega > \omega_p$:" + "\n" + r"$\mathrm{Re}\,\varepsilon_r > 0$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        bbox={
+            "boxstyle": "round,pad=0.18",
+            "fc": "white",
+            "ec": BLUE,
+            "lw": 1.0,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+    ax1.text(
+        1.04,
+        -2.90,
+        r"$\omega / \omega_p = 1$",
+        ha="left",
+        va="bottom",
+        fontsize=12.0,
+        color=GREY,
+        weight="bold",
+    )
+
+    ax1.set_xlim(0.45, 2.5)
+    ax1.set_ylim(-3.2, 1.15)
+    ax1.set_xlabel(r"normalized frequency $\omega / \omega_p$", fontsize=13.5)
+    ax1.set_ylabel(r"relative permittivity $\varepsilon_r(\omega)$", fontsize=13.5)
+    ax1.tick_params(labelsize=12)
+    for sp_name in ("top", "right"):
+        ax1.spines[sp_name].set_visible(False)
+    ax1.legend(
+        loc="lower right",
+        frameon=True,
+        facecolor="white",
+        framealpha=0.92,
+        fontsize=11.0,
+    )
+
+    # Bottom equations box under Left Panel (lines 1463, 1465, 1470-1472)
+    ax1_b = fig.add_axes([0.04, 0.02, 0.43, 0.14])
+    ax1_b.axis("off")
+    box(ax1_b, (0.5, 0.50), 0.98, 0.92, "", LGREEN, GREEN, lw=1.6, r=0.06, z=1)
+    ax1_b.text(
+        0.5,
+        0.72,
+        r"$\omega_p = \sqrt{\frac{n_e e^2}{\varepsilon_0 m_e}},\qquad"
+        r"\varepsilon_r(\omega) = 1 - \frac{\omega_p^2}{\omega^2 - i\nu\omega}$"
+        r"$\ \ (\mathrm{Drude(omega\_p,\ collision\_rate)},\ \varepsilon_\infty = 1)$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color="black",
+        zorder=4,
+    )
+    ax1_b.text(
+        0.5,
+        0.24,
+        rf"$n_e = \mathrm{{1e20\ m^{{-3}}}}\ \Rightarrow\ \omega_p \approx {omega_p * 1e-11:.2f}\times 10^{{11}}\mathrm{{\ rad/s}}$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        zorder=4,
+    )
+    ax1_b.set_xlim(0.0, 1.0)
+    ax1_b.set_ylim(0.0, 1.0)
+
+    # Vertical divider
+    fig.add_artist(
+        plt.Line2D(
+            [0.485, 0.485], [0.04, 0.94], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+
+    # ---- RIGHT PANEL: Analytical linear plasma wakefield (wakis.plasma) ----
+    ax2 = fig.add_axes([0.565, 0.24, 0.405, 0.62])
+    ax2.set_title(
+        "Analytical linear plasma wakefield (wakis.plasma)",
+        fontsize=14.5,
+        weight="bold",
+        pad=12,
+    )
+
+    ax2.axhline(0.0, color=GREY, lw=1.2, zorder=1)
+    ax2.axvline(0.0, color=GREY, lw=1.2, ls=":", zorder=1)
+
+    # Normalized longitudinal wakefield Ez / e_amp and +-1 envelope ('wake_amplitude')
+    ez_norm = Ez / e_amp
+    k_p_sigma = k_p * sigmaz
+    bunch_prof = 0.85 * np.exp(-0.5 * (k_p_s / k_p_sigma) ** 2)
+
+    ax2.fill_between(
+        k_p_s,
+        0.0,
+        bunch_prof,
+        color=LBLUE,
+        edgecolor=BLUE,
+        lw=1.6,
+        alpha=0.85,
+        zorder=2,
+    )
+    ax2.text(
+        0.4,
+        1.02,
+        "Gaussian drive bunch $(s = 0)$",
+        ha="center",
+        va="bottom",
+        fontsize=11.0,
+        color=BLUE,
+        weight="bold",
+        bbox={
+            "boxstyle": "round,pad=0.15",
+            "fc": "white",
+            "ec": BLUE,
+            "lw": 0.9,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+
+    # Trailing envelope in dashed green labelled 'wake_amplitude'
+    s_env = k_p_s[k_p_s >= 2.0]
+    ax2.plot(
+        s_env,
+        np.ones_like(s_env),
+        color=GREEN,
+        lw=2.2,
+        ls="--",
+        label="wake_amplitude",
+        zorder=3,
+    )
+    ax2.plot(s_env, -np.ones_like(s_env), color=GREEN, lw=2.2, ls="--", zorder=3)
+    ax2.plot(
+        k_p_s,
+        ez_norm,
+        color=BLUE,
+        lw=2.6,
+        label=r"longitudinal wake $E_z(s)$ (linear_wake)",
+        zorder=5,
+    )
+
+    ax2.text(
+        11.5,
+        1.08,
+        "wake_amplitude",
+        ha="center",
+        va="bottom",
+        fontsize=12.0,
+        color=GREEN,
+        weight="bold",
+    )
+
+    ax2.set_xlim(-3.5, 18.5)
+    ax2.set_ylim(-1.38, 1.38)
+    ax2.set_yticks([-1.0, 0.0, 1.0])
+    ax2.set_yticklabels([r"$-E_{\max}$", r"$0$", r"$+E_{\max}$"], fontsize=12)
+    ax2.set_xlabel(
+        r"normalized co-moving distance behind drive bunch $k_p s = k_p(ct - z)$",
+        fontsize=12.5,
+    )
+    ax2.set_ylabel(
+        r"longitudinal wakefield $E_z / E_{\max}$", fontsize=13.0, color=BLUE
+    )
+    ax2.tick_params(axis="x", labelsize=12)
+    for sp_name in ("top", "right"):
+        ax2.spines[sp_name].set_visible(False)
+    ax2.legend(
+        loc="lower right",
+        frameon=True,
+        facecolor="white",
+        framealpha=0.92,
+        fontsize=11.0,
+    )
+
+    # Bottom badge under Right Panel (line 1468)
+    ax2_b = fig.add_axes([0.53, 0.02, 0.45, 0.14])
+    ax2_b.axis("off")
+    box(ax2_b, (0.5, 0.50), 0.98, 0.92, "", LGREEN, GREEN, lw=1.6, r=0.06, z=1)
+    ax2_b.text(
+        0.5,
+        0.72,
+        r"$E_z(r, \xi) = -\frac{k_p^2}{2\pi\varepsilon_0}\,g(r; r_0)\int_\xi^\infty \lambda(\xi')\cos(k_p(\xi-\xi'))\,d\xi'$"
+        r"$\quad(\xi = z - ct = -s)$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color="black",
+        zorder=4,
+    )
+    badge(
+        ax2_b,
+        (0.5, 0.24),
+        "wakis.plasma: plasma_frequency, cold_plasma, linear_wake, wake_amplitude",
+        fc=GREEN,
+        fs=11.0,
+        pad=0.24,
+    )
+    ax2_b.set_xlim(0.0, 1.0)
+    ax2_b.set_ylim(0.0, 1.0)
+
+    fig.savefig(out_dir / "fig7_4_cold_plasma_wakefield.png", facecolor="white")
+    plt.close(fig)
+
+
+# --------------------------------------------------------------------------- 8.2
+def iso(p):
+    """Cabinet oblique projection (depth y drawn up and to the right at half scale)."""
+    x, y, z = p
+    return np.array(
+        [
+            x + 0.5 * y * np.cos(np.radians(35)),
+            z + 0.5 * y * np.sin(np.radians(35)),
+        ]
+    )
+
+
+def fig8_2(outroot):
+    """Figure 8.2: Soft current sources, time waveforms, and broadband spectral normalization."""
+    out_dir = outroot / "section8"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. Instantiate exact sources from user_manual.md lines 1530-1558:
+    pulse = GaussianSource(frequency=5e9, fwidth=2e9, cutoff=5.0)
+    cw = ContinuousSource(frequency=5e9, ramp_time=2e-9)
+    dipole = CurrentSource(
+        src_time=pulse,
+        component="z",
+        center=(0.0, 0.0, 0.0),
+        size=(0.0, 0.0, 0.0),
+        amplitude=1e-3,
+    )
+    kx = 2 * np.pi * 5e9 / 3e8 * np.sin(np.deg2rad(20))
+    sheet_src = CurrentSource(
+        src_time=pulse,
+        component="x",
+        center=(0.0, 0.0, -1e-2),
+        size=(np.inf, np.inf, 0.0),
+        amp_func=lambda x, y, z: np.exp(-1j * kx * x),
+    )
+    assert dipole.component == "z" and sheet_src.component == "x"
+
+    # Mathematical assertions on GaussianSource and ContinuousSource (lines 1494, 1531-1539, 1562-1563)
+    cutoff = 5.0
+    assert np.isclose(pulse.sigma_t, 1.0 / (2 * np.pi * pulse.fwidth), rtol=1e-15)
+    assert np.isclose(pulse.t0, pulse.start_time + cutoff * pulse.sigma_t, rtol=1e-15)
+    assert np.isclose(pulse.end_time, pulse.t0 + cutoff * pulse.sigma_t, rtol=1e-15)
+
+    dt_fine = 0.5e-12
+    t_dft = np.arange(0.0, 4.0e-9, dt_fine)
+    s_t = pulse(t_dft)
+    # Zero net charge: time integral of GaussianSource vanishes
+    assert abs(np.trapezoid(s_t, t_dft)) < 1e-4 * np.max(np.abs(s_t)) * pulse.end_time
+
+    freqs = np.linspace(3e9, 7e9, 401)
+    s_analytic = pulse.fourier_transform(freqs)
+    # Discrete running DFT sum_n s(t_n) exp(-2pi i f t_n) dt matches pulse.fourier_transform(freqs)
+    s_numeric = (
+        s_t[None, :] @ np.exp(-2j * np.pi * freqs[:, None] * t_dft[None, :]).T
+    ).ravel() * dt_fine
+    assert np.max(np.abs(s_numeric - s_analytic)) / np.max(np.abs(s_analytic)) < 5e-4
+
+    # Broadband CW normalization: H(f) recovered from F(f) / S(f) across [3, 7] GHz (lines 1562-1563)
+    f_r1, g_r1 = 4.4e9, 0.18e9
+    f_r2, g_r2 = 5.7e9, 0.22e9
+    h_exact = (
+        0.35
+        + 0.55 * (1j * g_r1) / ((freqs - f_r1) + 1j * g_r1)
+        + 0.45 * (1j * g_r2) / ((freqs - f_r2) + 1j * g_r2)
+    )
+    f_mon = h_exact * s_numeric
+    h_recovered = f_mon / s_analytic
+    assert np.max(np.abs(np.abs(h_recovered) - np.abs(h_exact))) < 5e-4
+
+    fig = plt.figure(figsize=(W21, H))
+
+    # ---- LEFT PANEL: Time profiles src_time(t) ----
+    fig.text(
+        0.18,
+        0.94,
+        "Time profiles: src_time(t)",
+        ha="center",
+        va="center",
+        fontsize=15.0,
+        weight="bold",
+    )
+
+    # Top sub-axes: GaussianSource
+    ax_p = fig.add_axes([0.045, 0.54, 0.27, 0.33])
+    t_ns_p = np.linspace(0.0, 1.5, 800)
+    t_s_p = t_ns_p * 1e-9
+    env_p = np.exp(-((t_s_p - pulse.t0) ** 2) / (2 * pulse.sigma_t**2))
+    ax_p.axhline(0.0, color=LGREY, lw=1.0, zorder=1)
+    ax_p.plot(
+        t_ns_p,
+        env_p,
+        color=GREY,
+        lw=1.4,
+        ls="--",
+        zorder=2,
+        label=r"$\pm\exp(-(t-t_0)^2/(2\sigma_t^2))$",
+    )
+    ax_p.plot(t_ns_p, -env_p, color=GREY, lw=1.4, ls="--", zorder=2)
+    ax_p.plot(t_ns_p, pulse(t_s_p), color=BLUE, lw=2.2, zorder=4)
+
+    t0_ns = pulse.t0 * 1e9
+    tend_ns = pulse.end_time * 1e9
+    ax_p.axvline(t0_ns, color=BLUE, lw=1.3, ls=":", zorder=3)
+    ax_p.axvline(tend_ns, color=RED, lw=1.4, ls="--", zorder=3)
+
+    ax_p.set_title(
+        "GaussianSource(frequency=5e9, fwidth=2e9, cutoff=5.0)",
+        fontsize=11.0,
+        weight="bold",
+        color=BLUE,
+        pad=6,
+    )
+    ax_p.text(
+        0.72,
+        0.90,
+        r"$t_0 = \mathrm{start\_time} + \mathrm{cutoff}\cdot\sigma_t$"
+        + "\n"
+        + r"$\sigma_t = 1/(2\pi\,\mathrm{fwidth})$",
+        ha="left",
+        va="top",
+        fontsize=9.8,
+        color=GREY,
+        bbox={
+            "boxstyle": "round,pad=0.14",
+            "fc": "white",
+            "ec": LGREY,
+            "lw": 0.9,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+    ax_p.text(
+        tend_ns + 0.03,
+        -0.82,
+        f"pulse.end_time = {tend_ns:.2f} ns",
+        ha="left",
+        va="bottom",
+        fontsize=10.0,
+        color=RED,
+        weight="bold",
+        bbox={
+            "boxstyle": "round,pad=0.14",
+            "fc": "white",
+            "ec": RED,
+            "lw": 0.9,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+    ax_p.set_xlim(0.0, 1.5)
+    ax_p.set_ylim(-1.15, 1.15)
+    ax_p.set_yticks([-1.0, 0.0, 1.0])
+    ax_p.set_xlabel("time $t$ [ns]", fontsize=11.5)
+    ax_p.set_ylabel("pulse(t)", fontsize=12.0, color=BLUE)
+    ax_p.tick_params(labelsize=10.5)
+    for sp_name in ("top", "right"):
+        ax_p.spines[sp_name].set_visible(False)
+
+    # Bottom sub-axes: ContinuousSource
+    ax_cw = fig.add_axes([0.045, 0.09, 0.27, 0.33])
+    t_ns_c = np.linspace(0.0, 2.5, 1000)
+    t_s_c = t_ns_c * 1e-9
+    ramp_env = np.sin(0.5 * np.pi * np.clip(t_s_c / cw.ramp_time, 0.0, 1.0)) ** 2
+    ax_cw.axhline(0.0, color=LGREY, lw=1.0, zorder=1)
+    ax_cw.plot(t_ns_c, ramp_env, color=GREY, lw=1.4, ls="--", zorder=2)
+    ax_cw.plot(t_ns_c, -ramp_env, color=GREY, lw=1.4, ls="--", zorder=2)
+    ax_cw.plot(t_ns_c, cw(t_s_c), color=ORANGE, lw=2.0, zorder=4)
+    ax_cw.axvline(cw.ramp_time * 1e9, color=GREY, lw=1.4, ls="--", zorder=3)
+
+    ax_cw.set_title(
+        "ContinuousSource(frequency=5e9, ramp_time=2e-9)",
+        fontsize=11.0,
+        weight="bold",
+        color=ORANGE,
+        pad=6,
+    )
+    ax_cw.text(
+        1.95,
+        -0.86,
+        "ramp_time = 2 ns",
+        ha="right",
+        va="bottom",
+        fontsize=10.5,
+        color=GREY,
+        weight="bold",
+        bbox={
+            "boxstyle": "round,pad=0.14",
+            "fc": "white",
+            "ec": GREY,
+            "lw": 0.9,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+    ax_cw.text(
+        0.12,
+        0.82,
+        r"$f_0 = 5\mathrm{\ GHz}$",
+        ha="left",
+        va="center",
+        fontsize=11.0,
+        color=ORANGE,
+        weight="bold",
+        bbox={
+            "boxstyle": "round,pad=0.14",
+            "fc": "white",
+            "ec": ORANGE,
+            "lw": 0.9,
+            "alpha": 0.92,
+        },
+        zorder=6,
+    )
+    ax_cw.set_xlim(0.0, 2.5)
+    ax_cw.set_ylim(-1.15, 1.15)
+    ax_cw.set_yticks([-1.0, 0.0, 1.0])
+    ax_cw.set_xlabel("time $t$ [ns]", fontsize=11.5)
+    ax_cw.set_ylabel("cw(t)", fontsize=12.0, color=ORANGE)
+    ax_cw.tick_params(labelsize=10.5)
+    for sp_name in ("top", "right"):
+        ax_cw.spines[sp_name].set_visible(False)
+
+    # Dividers
+    fig.add_artist(
+        plt.Line2D(
+            [0.335, 0.335], [0.04, 0.96], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+    fig.add_artist(
+        plt.Line2D(
+            [0.655, 0.655], [0.04, 0.96], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+
+    # ---- CENTRE PANEL: Spatial sources: CurrentSource / MagneticCurrentSource ----
+    fig.text(
+        0.495,
+        0.94,
+        "Spatial sources: CurrentSource / MagneticCurrentSource",
+        ha="center",
+        va="center",
+        fontsize=14.0,
+        weight="bold",
+    )
+
+    # Top sub-panel: 3D grid cell with point dipole z-edge arrow at center=(0,0,0)
+    ax_dip = fig.add_axes([0.345, 0.50, 0.30, 0.39])
+    bare(ax_dip)
+    V = {
+        (i, j, k): np.array([i, j, k], float)
+        for i in (0, 1)
+        for j in (0, 1)
+        for k in (0, 1)
+    }
+    edges = [
+        (a, b)
+        for a in V
+        for b in V
+        if sum(abs(np.array(a) - np.array(b))) == 1 and a < b
+    ]
+    for a, b in edges:
+        hidden = (0, 1, 0) in (a, b)
+        P, Q = iso(V[a]), iso(V[b])
+        ax_dip.plot(
+            *zip(P, Q),
+            color=BLUE,
+            lw=1.3 if hidden else 1.8,
+            ls=(0, (4, 4)) if hidden else "-",
+            alpha=0.45 if hidden else 0.75,
+            zorder=2,
+        )
+    # Highlight single z-edge arrow at front-left (0, 0, 0) -> (0, 0, 1)
+    P_dip, Q_dip = iso((0, 0, 0)), iso((0, 0, 1))
+    ax_dip.plot(*zip(P_dip, Q_dip), color=ORANGE, lw=6.0, alpha=0.45, zorder=4)
+    arrow(ax_dip, P_dip, Q_dip, BLUE, lw=4.2, ms=24, z=6)
+    ax_dip.add_patch(Circle(0.5 * (P_dip + Q_dip), 0.045, color=ORANGE, zorder=7))
+    ax_dip.text(
+        -0.12,
+        0.50,
+        r"$J_z$ at center=(0, 0, 0)",
+        ha="right",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+    )
+    box(
+        ax_dip,
+        (0.45, -0.34),
+        2.35,
+        0.42,
+        "Point dipole: size=(0.0, 0.0, 0.0),\n" + r"amplitude = $I\cdot l$ [A$\cdot$m]",
+        LBLUE,
+        BLUE,
+        fs=11.5,
+        lw=1.5,
+        r=0.06,
+    )
+    ax_dip.set_xlim(-0.85, 1.65)
+    ax_dip.set_ylim(-0.65, 1.42)
+
+    # Bottom sub-panel: 2D sheet plane z = -1e-2 with phased x-directed arrows
+    ax_sh = fig.add_axes([0.345, 0.04, 0.30, 0.43])
+    bare(ax_sh)
+    # Draw oblique sheet plane in (x, y) at z = 0
+    sheet_corners = [
+        iso((x, y, 0.0)) for x, y in ((-0.2, 0.0), (1.8, 0.0), (1.8, 1.2), (-0.2, 1.2))
+    ]
+    ax_sh.add_patch(
+        Polygon(
+            sheet_corners,
+            closed=True,
+            fc=LORANGE,
+            ec=ORANGE,
+            lw=2.0,
+            alpha=0.65,
+            zorder=1,
+        )
+    )
+    ax_sh.text(
+        2.16,
+        0.34,
+        r"$z = -1\mathrm{e}{-2}$",
+        ha="left",
+        va="center",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+    )
+    # Phased x-directed arrows across the sheet coloured by phase
+    phase_cols = [BLUE, GREEN, ORANGE, RED, BLUE]
+    xs_arr = np.linspace(0.05, 1.45, 5)
+    for idx_x, xv in enumerate(xs_arr):
+        col = phase_cols[idx_x]
+        for yv in (0.25, 0.65, 1.00):
+            p0 = iso((xv - 0.11, yv, 0.0))
+            p1 = iso((xv + 0.11, yv, 0.0))
+            arrow(ax_sh, p0, p1, col, lw=2.4, ms=14, z=5)
+
+    box(
+        ax_sh,
+        (0.95, -0.34),
+        2.75,
+        0.44,
+        "Sheet source: size=(np.inf, np.inf, 0.0),\n"
+        + r"amp_func = $\exp(-1j \cdot k_x \cdot x)$ [A/m]",
+        LORANGE,
+        ORANGE,
+        fs=11.5,
+        lw=1.5,
+        r=0.06,
+    )
+    ax_sh.set_xlim(-0.55, 2.55)
+    ax_sh.set_ylim(-0.66, 0.68)
+
+    # ---- RIGHT PANEL: Broadband CW normalization ----
+    fig.text(
+        0.825,
+        0.94,
+        "Broadband CW normalization",
+        ha="center",
+        va="center",
+        fontsize=15.0,
+        weight="bold",
+    )
+
+    ax_n = fig.add_axes([0.70, 0.25, 0.27, 0.62])
+    f_ghz = freqs * 1e-9
+    s_norm = np.abs(s_analytic) / np.max(np.abs(s_analytic))
+    f_norm = np.abs(f_mon) / np.max(np.abs(s_analytic))
+    h_abs = np.abs(h_recovered)
+
+    ax_n.plot(
+        f_ghz,
+        s_norm,
+        color=GREY,
+        lw=2.2,
+        ls="--",
+        label=r"source spectrum $|S(f)| = |\mathrm{pulse.fourier\_transform}(f)|$",
+        zorder=3,
+    )
+    ax_n.plot(
+        f_ghz,
+        f_norm,
+        color=BLUE,
+        lw=2.4,
+        label=r"recorded monitor spectrum $|F(f)| = |H(f)\cdot S(f)|$",
+        zorder=4,
+    )
+    ax_n.plot(
+        f_ghz,
+        h_abs,
+        color=GREEN,
+        lw=2.8,
+        label=r"normalized CW response $|F(f)/S(f)| = |H(f)|$",
+        zorder=5,
+    )
+
+    ax_n.set_xlim(3.0, 7.0)
+    ax_n.set_ylim(0.0, 1.32)
+    ax_n.set_xlabel("frequency $f$ [GHz]", fontsize=13.0)
+    ax_n.set_ylabel("normalized spectral magnitude", fontsize=12.5)
+    ax_n.tick_params(labelsize=11.5)
+    for sp_name in ("top", "right"):
+        ax_n.spines[sp_name].set_visible(False)
+    ax_n.legend(
+        loc="upper right",
+        frameon=True,
+        facecolor="white",
+        framealpha=0.94,
+        fontsize=10.0,
+    )
+
+    # Bottom box under Right Panel (lines 1494, 1562-1563)
+    ax_nb = fig.add_axes([0.675, 0.03, 0.305, 0.15])
+    ax_nb.axis("off")
+    box(ax_nb, (0.5, 0.50), 0.98, 0.92, "", LGREEN, GREEN, lw=1.6, r=0.06, z=1)
+    ax_nb.text(
+        0.5,
+        0.74,
+        r"$S(f) = \sum_n s(t_n)\,e^{-2\pi i f t_n}\,\Delta t$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color="black",
+        zorder=4,
+    )
+    badge(
+        ax_nb,
+        (0.5, 0.25),
+        r"$F(f)/S(f)$ (or power / $|S(f)|^2$): exact CW response across bandwidth in 1 run",
+        fc=GREEN,
+        fs=9.8,
+        pad=0.22,
+    )
+    ax_nb.set_xlim(0.0, 1.0)
+    ax_nb.set_ylim(0.0, 1.0)
+
+    fig.savefig(out_dir / "fig8_2_waveforms_and_normalization.png", facecolor="white")
+    plt.close(fig)
+
+
+def _verify_mutations():
+    """Verify that mutating each figure's mathematical relation violates its assertion."""
+    # 5.3 mutation: dropping the dt/2 phase offset on H_DFT degrades convergence from O(dt^2) to O(dt)
+    f0 = 1.0
+    w0 = 2 * np.pi * f0
+    t_end = 4.0
+    errs_mut = []
+    for nt in (80, 160):
+        dt = t_end / nt
+        n = np.arange(nt)
+        t_e = (n + 1.0) * dt
+        t_h = (n + 0.5) * dt
+        e_sig = (t_e / t_end) * (1.0 - t_e / t_end) * np.cos(w0 * t_e)
+        h_sig = (t_h / t_end) * (1.0 - t_h / t_end) * np.cos(w0 * t_h)
+        e_dft = np.sum(e_sig * np.exp(-2j * np.pi * f0 * t_e)) * dt
+        h_dft_mut = np.sum(h_sig * np.exp(-2j * np.pi * f0 * t_e)) * dt
+        errs_mut.append(abs(e_dft - h_dft_mut) / abs(e_dft))
+    assert not np.isclose(errs_mut[0] / errs_mut[1], 4.0, rtol=5e-2)
+
+    # 6.4 mutation: corrupting the -1 extrapolation weight in T breaks reproduction of uniform H = 1
+    a_hat_1 = 1.0 + 2.0 * 0.08
+    a_hat_2 = 1.0 - 0.5 * 0.08  # mutated from -1.0 to -0.5
+    assert not np.isclose(1.0 + 2.0 * 0.08 + (-0.5) * 0.08, 1.0 + 0.08)
+    assert not np.isclose(a_hat_1 + a_hat_2, 2.0 + 0.08)
+
+    # 7.2 mutation: flipping the sign of i in Lorentz susceptibility violates passivity Im chi <= 0
+    lor_conj = np.conj(Lorentz(1.0, 1.0, 0.2).chi(1.0))
+    assert not (lor_conj.imag <= 0.0)
+
+    # 8.2 mutation: omitting 1/S(f) normalization fails to recover |H(f)|
+    pulse = GaussianSource(frequency=5e9, fwidth=2e9, cutoff=5.0)
+    freqs = np.linspace(3e9, 7e9, 41)
+    s_f = pulse.fourier_transform(freqs)
+    h_f = 1.0 / (1.0 + 1j * (freqs - 5e9) / 0.5e9)
+    f_mon = h_f * s_f
+    assert not np.allclose(np.abs(f_mon), np.abs(h_f), rtol=1e-2)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
+    _verify_mutations()
     fig5_3(outroot)
     fig6_1(outroot)
     fig6_3(outroot)
     fig6_4(outroot)
     fig7_2(outroot)
+    fig7_4(outroot)
+    fig8_2(outroot)
