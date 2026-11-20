@@ -1,0 +1,11 @@
+{
+ "keep": "Edit this scientific diagram. Keep everything that is not mentioned below exactly as it is: layout, colours, line styles, every other label, symbol and equation. Re-render at high resolution with crisp lines and sharp text. Do not add titles, numbers or new labels.",
+ "upscale_only": "Re-render this exact diagram at high resolution with crisp lines and sharp text. Do not change any content, label, symbol, sign, arrow, colour or layout.",
+ "items": [
+  {
+   "id": "fig9_2_cpml_vs_pml",
+   "source": "c0/critic_desc2.jpg",
+   "edit": "RIGHT PANEL (profile plot) ONLY: redraw the green alpha curve so that it starts at its maximum value at the inner face (left, labelled 'inner face') and decreases linearly to zero at the domain wall (right), i.e. alpha(x) = alpha_max (1 - x/d). Move the label 'α_max = 0.05' to the left end of the green curve. Keep the blue sigma curve and the orange kappa curve rising from the inner face to the wall exactly as they are."
+  }
+ ]
+}
