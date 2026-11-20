@@ -753,10 +753,10 @@ def fig6_1(outroot):
     ax.legend(
         loc="lower left",
         frameon=False,
-        fontsize=12.0,
-        ncol=2,
-        columnspacing=1.0,
-        bbox_to_anchor=(0.01, -0.02),
+        fontsize=11.5,
+        ncol=1,
+        labelspacing=0.25,
+        bbox_to_anchor=(-0.01, -0.05),
     )
 
     ax.set_xlim(-0.45, 6.75)
@@ -939,8 +939,366 @@ def fig6_1(outroot):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 6.3
+def fig6_3(outroot):
+    """Figure 6.3: Nonuniform Cartesian meshing and automatic STL feature snapping in GridFIT3D."""
+    out_dir = outroot / "section6"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Execute the exact graded-mesh code from user_manual.md lines 1175-1179:
+    x_fine = np.linspace(-5e-3, 5e-3, 41)
+    x_left = np.geomspace(-50e-3, -5e-3, 25)[:-1]
+    x_right = np.geomspace(5e-3, 50e-3, 25)[1:]
+    x_nodes = np.concatenate([x_left, x_fine, x_right])
+
+    grid_graded = GridFIT3D(
+        xmin=x_nodes[0],
+        xmax=x_nodes[-1],
+        ymin=-50e-3,
+        ymax=50e-3,
+        zmin=-50e-3,
+        zmax=50e-3,
+        x=x_nodes,
+        y=np.linspace(-50e-3, 50e-3, 11),
+        z=np.linspace(-50e-3, 50e-3, 11),
+        boundary_at_domain_edge=False,
+        verbose=0,
+    )
+
+    x_mm = x_nodes * 1e3
+    dx_mm = grid_graded.dx * 1e3
+    x_mid_mm = 0.5 * (x_mm[:-1] + x_mm[1:])
+    adj_ratio = np.maximum(dx_mm[1:] / dx_mm[:-1], dx_mm[:-1] / dx_mm[1:])
+    x_ratio_mm = x_mm[1:-1]
+
+    # Asserts for graded mesh (user_manual.md lines 1175-1179, 1206)
+    assert len(x_fine) == 41 and len(x_nodes) == 89
+    assert np.isclose(np.min(dx_mm), 0.25)
+    wing_ratio = (50.0 / 5.0) ** (1.0 / 24.0)
+    assert np.allclose(dx_mm[:23][1:] / dx_mm[:23][:-1], 1.0 / wing_ratio)
+    assert 1.0 < wing_ratio <= 1.2
+
+    # Feature snapping strips for Right Panel (user_manual.md lines 1191-1200)
+    zmin_mm, zmax_mm = -100.0, 100.0
+    n_uni = 17  # 16 cells of 12.5 mm
+    z_uni = np.linspace(zmin_mm, zmax_mm, n_uni)
+    z_features = np.array([-42.0, 42.0])
+    # Strip 2: insert extra grid planes at feature planes
+    z_insert = np.sort(np.concatenate([z_uni, z_features]))
+    # Strip 3: shift nearest existing grid nodes onto feature planes with smooth neighbour spacing
+    z_snaps_all = np.array([zmin_mm, z_features[0], z_features[1], zmax_mm])
+    z_stretch = grid_graded.refine_axis(
+        zmin_mm, zmax_mm, n_uni, z_snaps_all, method="neighbor", tol=1e-10
+    )
+    # Enforce exact snap positions on the stretched grid
+    for zf in z_features:
+        idx_near = int(np.argmin(np.abs(z_stretch - zf)))
+        z_stretch[idx_near] = zf
+
+    assert (
+        np.min(np.abs(z_uni[:, None] - z_features[None, :])) > 4.0
+    )  # uniform grid misses feature planes
+    assert (
+        np.max(np.min(np.abs(z_insert[:, None] - z_features[None, :]), axis=0)) < 1e-12
+    )
+    assert (
+        np.max(np.min(np.abs(z_stretch[:, None] - z_features[None, :]), axis=0)) < 1e-12
+    )
+    assert len(z_insert) == len(z_uni) + 2 and len(z_stretch) == len(z_uni)
+
+    fig = plt.figure(figsize=(W, H))
+
+    # ---- LEFT PANEL: Explicit graded mesh x_nodes ----
+    fig.text(
+        0.255,
+        0.94,
+        "Explicit graded node array x_nodes",
+        ha="center",
+        va="center",
+        fontsize=16,
+        weight="bold",
+    )
+
+    # Top sub-axes: vertical node ticks
+    ax_top = fig.add_axes([0.06, 0.66, 0.39, 0.22])
+    ax_top.axvspan(-50.0, -5.0, color=LORANGE, alpha=0.65, zorder=1)
+    ax_top.axvspan(-5.0, 5.0, color=LBLUE, alpha=0.85, zorder=1)
+    ax_top.axvspan(5.0, 50.0, color=LORANGE, alpha=0.65, zorder=1)
+    for xv in x_mm:
+        ax_top.plot([xv, xv], [0.10, 0.54], color=BLUE, lw=1.1, zorder=3)
+    ax_top.text(
+        0.0,
+        0.84,
+        "x_fine: 41 nodes",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec=BLUE, lw=1.0, alpha=0.94),
+        zorder=5,
+    )
+    ax_top.text(
+        -31.0,
+        0.72,
+        "x_left, x_right:\ngeomspace",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=ORANGE,
+        weight="bold",
+        zorder=5,
+    )
+    ax_top.text(
+        31.0,
+        0.72,
+        "x_left, x_right:\ngeomspace",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=ORANGE,
+        weight="bold",
+        zorder=5,
+    )
+    ax_top.set_xlim(-52.0, 52.0)
+    ax_top.set_ylim(0.0, 1.04)
+    ax_top.set_yticks([])
+    ax_top.set_xticks([-50, -25, -5, 5, 25, 50])
+    ax_top.tick_params(axis="x", labelsize=11.5)
+    for sp_name in ("top", "right", "left"):
+        ax_top.spines[sp_name].set_visible(False)
+
+    # Bottom sub-axes: cell size dx_i [mm] and adjacent ratio on twin axis
+    ax_bot = fig.add_axes([0.06, 0.11, 0.37, 0.48])
+    ax_twin = ax_bot.twinx()
+
+    # Smooth grading band [1.0, 1.3] on twin axis
+    ax_twin.axhspan(1.0, 1.3, color=LGREEN, alpha=0.65, zorder=1)
+    ax_twin.axhline(1.3, color=GREEN, lw=1.3, ls="--", zorder=2)
+
+    ax_bot.plot(
+        x_mid_mm,
+        dx_mm,
+        "-o",
+        color=BLUE,
+        lw=1.8,
+        ms=3.5,
+        zorder=4,
+        label=r"cell size $\Delta x_i$ [mm]",
+    )
+    ax_twin.plot(
+        x_ratio_mm,
+        adj_ratio,
+        "--s",
+        color=ORANGE,
+        lw=1.6,
+        ms=3.0,
+        zorder=5,
+        label=r"ratio $\max(\Delta x_{i+1}/\Delta x_i,\ \Delta x_i/\Delta x_{i+1})$",
+    )
+
+    ax_bot.set_xlim(-52.0, 52.0)
+    ax_bot.set_ylim(0.0, 5.2)
+    ax_twin.set_ylim(0.95, 2.25)
+    ax_bot.set_xlabel("position $x$ [mm]", fontsize=13.5)
+    ax_bot.set_ylabel(r"cell size $\Delta x_i$ [mm]", fontsize=13.5, color=BLUE)
+    ax_twin.set_ylabel(
+        r"adjacent ratio $\Delta x_{i+1}/\Delta x_i$", fontsize=13.0, color=ORANGE
+    )
+    ax_bot.tick_params(axis="y", colors=BLUE, labelsize=12)
+    ax_twin.tick_params(axis="y", colors=ORANGE, labelsize=12)
+    ax_bot.tick_params(axis="x", labelsize=12)
+    ax_bot.spines["top"].set_visible(False)
+    ax_twin.spines["top"].set_visible(False)
+
+    ax_twin.text(
+        0.0,
+        1.16,
+        r"smooth grading: $1/\mathrm{grading} \leq \Delta x_{i+1}/\Delta x_i \leq 1.2\text{–}1.3$",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=GREEN,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=GREEN, lw=1.0, alpha=0.92),
+        zorder=6,
+    )
+    ax_bot.text(
+        0.0,
+        4.65,
+        r"global CFL $\Delta t$ governed by $\min(\Delta x_i, \Delta y_j, \Delta z_k)$",
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=GREY,
+        bbox=dict(boxstyle="round,pad=0.22", fc=LGREY, ec=GREY, lw=1.0),
+        zorder=6,
+    )
+
+    # Vertical divider between left and right panels
+    fig.add_artist(
+        plt.Line2D(
+            [0.515, 0.515], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+
+    # ---- RIGHT PANEL: Automatic STL feature snapping ----
+    fig.text(
+        0.755,
+        0.94,
+        "Automatic STL feature snapping (use_mesh_refinement=True)",
+        ha="center",
+        va="center",
+        fontsize=15.0,
+        weight="bold",
+    )
+    ax_r = fig.add_axes([0.53, 0.04, 0.45, 0.86])
+    ax_r.axis("off")
+
+    # Axisymmetric cavity STL profile at the top (z in [-100, 100], r in [2.30, 3.16])
+    z_prof = [-100.0, -42.0, -42.0, 42.0, 42.0, 100.0]
+    r_top = [2.62, 2.62, 3.16, 3.16, 2.62, 2.62]
+    r_axis = 2.30
+    poly_pts = list(zip(z_prof, r_top)) + [(100.0, r_axis), (-100.0, r_axis)]
+    ax_r.add_patch(
+        Polygon(poly_pts, closed=True, fc=LBLUE, ec="none", alpha=0.55, zorder=1)
+    )
+    ax_r.plot(z_prof, r_top, color=GREY, lw=2.6, zorder=4)
+    ax_r.plot([-100.0, 100.0], [r_axis, r_axis], color=GREY, lw=1.2, ls="-.", zorder=2)
+    ax_r.text(
+        0.0,
+        2.86,
+        "Axisymmetric cavity STL profile",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color=GREY,
+        weight="bold",
+    )
+
+    # Two vertical dashed green lines extending down from the iris corners at z = +-42
+    for zf in z_features:
+        ax_r.plot([zf, zf], [0.04, 3.24], color=GREEN, lw=2.0, ls="--", zorder=3)
+        ax_r.plot([zf], [2.62], "o", color=GREEN, ms=8, mec="white", mew=1.2, zorder=6)
+    badge(
+        ax_r,
+        (0.0, 3.34),
+        "STL feature planes (snap_tol=1e-4)",
+        fc=GREEN,
+        fs=12.0,
+        pad=0.26,
+    )
+
+    # Three horizontal z-grid strips stacked vertically
+    strips = [
+        (
+            1.78,
+            z_uni,
+            "Uniform grid (use_mesh_refinement=False)",
+            "misses feature planes",
+            RED,
+            "uniform",
+        ),
+        (
+            1.02,
+            z_insert,
+            'refinement_method="insert"',
+            "extra planes inserted",
+            GREEN,
+            "insert",
+        ),
+        (
+            0.26,
+            z_stretch,
+            'refinement_method="stretch"',
+            "nearest nodes shifted",
+            GREEN,
+            "stretch",
+        ),
+    ]
+    sh = 0.34
+    for y_c, z_arr, title, note, ncol, mode in strips:
+        ax_r.text(
+            -100.0,
+            y_c + sh / 2 + 0.08,
+            title,
+            ha="left",
+            va="bottom",
+            fontsize=12.0,
+            weight="bold",
+            color="black",
+        )
+        ax_r.text(
+            100.0,
+            y_c + sh / 2 + 0.08,
+            note,
+            ha="right",
+            va="bottom",
+            fontsize=11.5,
+            weight="bold",
+            color=ncol,
+        )
+        ax_r.add_patch(
+            Rectangle(
+                (-100.0, y_c - sh / 2), 200.0, sh, fc="white", ec=GREY, lw=1.2, zorder=2
+            )
+        )
+        for zv in z_arr:
+            is_snapped = np.min(np.abs(zv - z_features)) < 1e-6
+            if is_snapped:
+                ax_r.plot(
+                    [zv, zv],
+                    [y_c - sh / 2 - 0.03, y_c + sh / 2 + 0.03],
+                    color=GREEN,
+                    lw=3.2,
+                    zorder=5,
+                )
+                ax_r.plot([zv], [y_c], "o", color=GREEN, ms=7, zorder=6)
+            else:
+                ax_r.plot(
+                    [zv, zv], [y_c - sh / 2, y_c + sh / 2], color=BLUE, lw=1.6, zorder=4
+                )
+
+        if mode == "uniform":
+            # Mark missed feature planes with red crosses
+            for zf in z_features:
+                ax_r.plot(
+                    [zf - 3.6, zf + 3.6],
+                    [y_c - 0.08, y_c + 0.08],
+                    color=RED,
+                    lw=2.6,
+                    zorder=7,
+                )
+                ax_r.plot(
+                    [zf - 3.6, zf + 3.6],
+                    [y_c + 0.08, y_c - 0.08],
+                    color=RED,
+                    lw=2.6,
+                    zorder=7,
+                )
+        elif mode == "stretch":
+            for z_old, zf in ((-37.5, -42.0), (37.5, 42.0)):
+                ax_r.plot(
+                    [z_old, z_old],
+                    [y_c - sh / 2, y_c + sh / 2],
+                    color=BLUE,
+                    lw=1.2,
+                    ls=":",
+                    alpha=0.6,
+                    zorder=3,
+                )
+                arrow(ax_r, (z_old, y_c), (zf, y_c), ORANGE, lw=2.2, ms=14, z=7)
+
+    ax_r.set_xlim(-108.0, 108.0)
+    ax_r.set_ylim(-0.05, 3.55)
+
+    fig.savefig(out_dir / "fig6_3_graded_mesh_and_snapping.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
     fig5_3(outroot)
     fig6_1(outroot)
+    fig6_3(outroot)
