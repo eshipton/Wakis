@@ -36,6 +36,7 @@ from wakis.conformal import (  # noqa: E402
     _redistribution,
     _section_areas_full,
 )
+from wakis.dispersive import Debye, DispersiveMaterial, Drude, Lorentz  # noqa: E402
 from wakis.templates import Sheet  # noqa: E402
 
 BLUE, LBLUE = "#2f6fb0", "#d6e6f5"
@@ -1416,12 +1417,12 @@ def fig6_4(outroot):
         weight="bold",
     )
     fig.text(
-        0.835,
+        0.825,
         0.93,
         "3. Thin Sheet & Meixner edge correction",
         ha="center",
         va="center",
-        fontsize=14.5,
+        fontsize=13.5,
         weight="bold",
     )
 
@@ -1854,6 +1855,339 @@ def fig6_4(outroot):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 7.2
+def fig7_2(outroot):
+    """Figure 7.2: Multi-pole dispersive materials via Auxiliary Differential Equations (wakis.dispersive)."""
+    out_dir = outroot / "section7"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Evaluate exact susceptibilities using wakis.dispersive (user_manual.md lines 1384, 1390-1392)
+    lorentz_pole = Lorentz(delta_eps=1.0, omega_0=1.0, gamma=0.2)
+    drude_pole = Drude(omega_p=1.0, gamma=0.2)
+    debye_pole = Debye(delta_eps=1.0, tau=1.0)
+
+    u_lor = np.linspace(0.0, 2.0, 500)
+    chi_lor = lorentz_pole.chi(u_lor)
+
+    u_dru = np.linspace(0.25, 2.0, 500)
+    chi_dru = drude_pole.chi(u_dru)
+
+    u_deb = np.geomspace(0.05, 20.0, 500)
+    chi_deb = debye_pole.chi(u_deb)
+
+    # Mathematical assertions (passivity in exp(+i omega t), resonance values, O(dt^2) discrete ADE)
+    assert (
+        np.all(chi_lor.imag <= 1e-15)
+        and np.all(chi_dru.imag <= 1e-15)
+        and np.all(chi_deb.imag <= 1e-15)
+    )
+    chi_lor_res = lorentz_pole.chi(1.0)
+    assert np.isclose(chi_lor_res.real, 0.0, atol=1e-14) and np.isclose(
+        chi_lor_res.imag, -1.0 / 0.2
+    )
+    chi_deb_res = debye_pole.chi(1.0)
+    assert np.isclose(chi_deb_res.real, 0.5) and np.isclose(chi_deb_res.imag, -0.5)
+    # Verify O(dt^2) convergence of mat.epsilon_discrete(f, dt) to mat.epsilon(f) (user_manual.md line 1400)
+    mat_test = DispersiveMaterial(
+        eps_inf=2.0, poles=[lorentz_pole, drude_pole, debye_pole], sigma=0.0
+    )
+    f_test = 0.8 / (2 * np.pi)
+    err_dt1 = abs(mat_test.epsilon_discrete(f_test, 0.05) - mat_test.epsilon(f_test))
+    err_dt2 = abs(mat_test.epsilon_discrete(f_test, 0.025) - mat_test.epsilon(f_test))
+    assert np.isclose(err_dt1 / err_dt2, 4.0, rtol=2e-2)
+
+    fig = plt.figure(figsize=(W21, H))
+
+    # Shared top equation banner across Panels 1-3 (line 1384)
+    ax_ban = fig.add_axes([0.02, 0.88, 0.65, 0.10])
+    ax_ban.axis("off")
+    box(
+        ax_ban,
+        (0.5, 0.48),
+        0.96,
+        0.74,
+        r"$\varepsilon_r(\omega) = \varepsilon_\infty + \sum_p \chi_p(\omega) + \frac{\sigma}{i\omega\varepsilon_0}$"
+        + r"$\qquad(\exp(+i\omega t)\ \mathrm{convention:\ Im}\,\chi_p(\omega) \leq 0)$",
+        LBLUE,
+        BLUE,
+        fs=14.5,
+        lw=1.6,
+        r=0.04,
+    )
+    ax_ban.set_xlim(0.0, 1.0)
+    ax_ban.set_ylim(0.0, 1.0)
+
+    # Helper to style susceptibility sub-plots (Panels 1-3)
+    panel_specs = [
+        (
+            [0.03, 0.36, 0.19, 0.44],
+            "Lorentz(delta_eps, omega_0, gamma)",
+            u_lor,
+            chi_lor,
+            r"$\omega / \omega_0$",
+            False,
+            1.0,
+            r"$\omega = \omega_0$",
+            r"$\chi_p(\omega) = \frac{\Delta\varepsilon\,\omega_0^2}{\omega_0^2 - \omega^2 + i\gamma\omega}$",
+            r"$\frac{d^2\mathbf{P}_p}{dt^2} + \gamma\frac{d\mathbf{P}_p}{dt} + \omega_0^2\mathbf{P}_p = \varepsilon_0\Delta\varepsilon\,\omega_0^2\mathbf{E}$",
+        ),
+        (
+            [0.25, 0.36, 0.19, 0.44],
+            "Drude(omega_p, gamma)",
+            u_dru,
+            chi_dru,
+            r"$\omega / \omega_p$",
+            False,
+            1.0,
+            r"$\omega = \omega_p$",
+            r"$\chi_p(\omega) = -\frac{\omega_p^2}{\omega^2 - i\gamma\omega}$",
+            r"$\frac{d^2\mathbf{P}_p}{dt^2} + \gamma\frac{d\mathbf{P}_p}{dt} = \varepsilon_0\omega_p^2\mathbf{E}$",
+        ),
+        (
+            [0.47, 0.36, 0.19, 0.44],
+            "Debye(delta_eps, tau)",
+            u_deb,
+            chi_deb,
+            r"$\omega\tau$ (log scale)",
+            True,
+            1.0,
+            r"$\omega = 1/\tau$",
+            r"$\chi_p(\omega) = \frac{\Delta\varepsilon}{1 + i\omega\tau}$",
+            r"$\tau\frac{d\mathbf{P}_p}{dt} + \mathbf{P}_p = \varepsilon_0\Delta\varepsilon\,\mathbf{E}$",
+        ),
+    ]
+
+    for (
+        rect,
+        title,
+        u,
+        chi,
+        xlab,
+        is_log,
+        u_mark,
+        mark_lab,
+        eq_chi,
+        eq_ode,
+    ) in panel_specs:
+        ax = fig.add_axes(rect)
+        ax.set_title(title, fontsize=12.5, weight="bold", pad=10)
+        ax.axhline(0.0, color=GREY, lw=1.0, alpha=0.7, zorder=1)
+        ax.axvline(u_mark, color=GREY, lw=1.4, ls="--", zorder=2)
+        if is_log:
+            ax.semilogx(
+                u,
+                chi.real,
+                color=BLUE,
+                lw=2.5,
+                label=r"$\mathrm{Re}\,\chi_p$",
+                zorder=4,
+            )
+            ax.semilogx(
+                u,
+                chi.imag,
+                color=ORANGE,
+                lw=2.5,
+                ls="--",
+                label=r"$\mathrm{Im}\,\chi_p \leq 0$",
+                zorder=4,
+            )
+            ax.set_xticks([0.1, 1.0, 10.0])
+            ax.set_xticklabels(["0.1", "1", "10"], fontsize=11.5)
+        else:
+            ax.plot(
+                u,
+                chi.real,
+                color=BLUE,
+                lw=2.5,
+                label=r"$\mathrm{Re}\,\chi_p$",
+                zorder=4,
+            )
+            ax.plot(
+                u,
+                chi.imag,
+                color=ORANGE,
+                lw=2.5,
+                ls="--",
+                label=r"$\mathrm{Im}\,\chi_p \leq 0$",
+                zorder=4,
+            )
+            ax.set_xticks(
+                [0.5, 1.0, 1.5, 2.0] if u[0] > 0 else [0.0, 0.5, 1.0, 1.5, 2.0]
+            )
+            ax.tick_params(axis="x", labelsize=11.5)
+
+        ax.set_xlim(u[0], u[-1])
+        ax.set_yticks([])
+        ax.minorticks_off()
+        for sp_name in ("top", "right"):
+            ax.spines[sp_name].set_visible(False)
+        ax.set_xlabel(xlab, fontsize=12.5)
+        ax.text(
+            u_mark * (1.12 if is_log else 1.04),
+            ax.get_ylim()[0] + 0.14 * (ax.get_ylim()[1] - ax.get_ylim()[0]),
+            mark_lab,
+            ha="left",
+            va="bottom",
+            fontsize=11.5,
+            color=GREY,
+            weight="bold",
+        )
+        if title.startswith("Lorentz"):
+            ax.legend(loc="lower left", frameon=False, fontsize=11.5)
+
+        # Card beneath the plot with chi_p(omega) and time-domain ADE
+        ax_c = fig.add_axes([rect[0] - 0.005, 0.04, rect[2] + 0.01, 0.24])
+        ax_c.axis("off")
+        box(ax_c, (0.5, 0.50), 0.98, 0.92, "", LGREEN, GREEN, lw=1.5, r=0.06, z=1)
+        ax_c.text(
+            0.5,
+            0.72,
+            eq_chi,
+            ha="center",
+            va="center",
+            fontsize=13.5,
+            color="black",
+            zorder=4,
+        )
+        ax_c.text(
+            0.5,
+            0.24,
+            eq_ode,
+            ha="center",
+            va="center",
+            fontsize=11.5,
+            color=GREY,
+            zorder=4,
+        )
+        ax_c.set_xlim(0.0, 1.0)
+        ax_c.set_ylim(0.0, 1.0)
+
+    # Vertical divider before Panel 4
+    fig.add_artist(
+        plt.Line2D(
+            [0.68, 0.68], [0.04, 0.96], transform=fig.transFigure, color=LGREY, lw=1.6
+        )
+    )
+
+    # ---- PANEL 4: Explicit 2nd-Order ADE Update (lines 1396-1400) ----
+    ax4 = fig.add_axes([0.69, 0.03, 0.30, 0.94])
+    ax4.axis("off")
+    ax4.text(
+        0.5,
+        0.96,
+        "Explicit 2nd-Order ADE Update",
+        ha="center",
+        va="center",
+        fontsize=14.5,
+        weight="bold",
+    )
+
+    # Stage 1 box (green border)
+    box(ax4, (0.5, 0.68), 0.96, 0.42, "", LGREEN, GREEN, lw=2.0, r=0.05, z=1)
+    badge(
+        ax4,
+        (0.5, 0.84),
+        r"Stage 1: inputs $\mathbf{P}_p^{n-1},\ \mathbf{P}_p^n,\ \mathbf{E}^n \;\rightarrow\;$ update $\mathbf{P}_p^{n+1}$",
+        fc=GREEN,
+        fs=11.0,
+        pad=0.25,
+    )
+    ax4.text(
+        0.5,
+        0.70,
+        r"$\frac{\mathbf{P}_p^{n+1}-2\mathbf{P}_p^n+\mathbf{P}_p^{n-1}}{\Delta t^2}"
+        r" + \gamma_p\frac{\mathbf{P}_p^{n+1}-\mathbf{P}_p^{n-1}}{2\Delta t} + \omega_{0,p}^2\mathbf{P}_p^n$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color="black",
+        zorder=4,
+    )
+    ax4.text(
+        0.5,
+        0.59,
+        r"$= \varepsilon_0\Delta\varepsilon_p\omega_{0,p}^2\,\mathbf{E}^n$",
+        ha="center",
+        va="center",
+        fontsize=12.5,
+        color="black",
+        zorder=4,
+    )
+    ax4.text(
+        0.5,
+        0.51,
+        r"Debye & $\sigma$: Crank–Nicolson on $[n\Delta t,\ (n+1)\Delta t]$",
+        ha="center",
+        va="center",
+        fontsize=10.5,
+        color=GREY,
+        weight="bold",
+        zorder=4,
+    )
+
+    # Arrow from Stage 1 to Stage 2
+    arrow(ax4, (0.5, 0.46), (0.5, 0.39), GREEN, lw=2.6, ms=18, z=6)
+    ax4.text(
+        0.53,
+        0.425,
+        r"$\sum_p (\mathbf{P}_p^{n+1} - \mathbf{P}_p^n)$",
+        ha="left",
+        va="center",
+        fontsize=11.5,
+        color=GREEN,
+        weight="bold",
+    )
+
+    # Stage 2 box (blue border)
+    box(ax4, (0.5, 0.25), 0.96, 0.26, "", LBLUE, BLUE, lw=2.0, r=0.05, z=1)
+    badge(
+        ax4,
+        (0.5, 0.33),
+        r"Stage 2: inputs $\mathbf{H}^{n+1/2},\ \mathbf{J}_s^{n+1/2},\ \sum_p(\mathbf{P}_p^{n+1}-\mathbf{P}_p^n) \;\rightarrow\;$ advance $\mathbf{E}^{n+1}$",
+        fc=BLUE,
+        fs=10.0,
+        pad=0.24,
+    )
+    ax4.text(
+        0.5,
+        0.22,
+        r"$\varepsilon_0\varepsilon_\infty(\mathbf{E}^{n+1}-\mathbf{E}^n) = "
+        r"\Delta t(\nabla\times\mathbf{H}^{n+1/2} - \mathbf{J}_s^{n+1/2})$",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color="black",
+        zorder=4,
+    )
+    ax4.text(
+        0.5,
+        0.15,
+        r"$-\,\sum_p (\mathbf{P}_p^{n+1} - \mathbf{P}_p^n)$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        zorder=4,
+    )
+
+    # Bottom grey badge (line 1400)
+    badge(
+        ax4,
+        (0.5, 0.04),
+        "query continuous mat.epsilon(f) or\nexact discrete mat.epsilon_discrete(f, dt=solver.dt)",
+        fc=GREY,
+        fs=10.5,
+        pad=0.26,
+    )
+
+    ax4.set_xlim(0.0, 1.0)
+    ax4.set_ylim(0.0, 1.0)
+
+    fig.savefig(out_dir / "fig7_2_ade_dispersive_poles.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
@@ -1861,3 +2195,4 @@ if __name__ == "__main__":
     fig6_1(outroot)
     fig6_3(outroot)
     fig6_4(outroot)
+    fig7_2(outroot)
