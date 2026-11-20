@@ -32,6 +32,7 @@ from scipy.spatial import Delaunay  # noqa: E402
 from scipy.special import i0, i1, k0, k1  # noqa: E402
 
 from wakis import GridFIT3D, SolverFIT3D  # noqa: E402
+from wakis import estimate as est_mod  # noqa: E402
 from wakis.benchmarks import cost_to_target  # noqa: E402
 from wakis.inverse import projection as ssp  # noqa: E402
 from wakis.plasma import linear_wake, pipe_green_function, plasma_frequency, plasma_wavelength  # noqa: E402
@@ -1086,12 +1087,12 @@ def fig15_2_cost_to_target(out_root):
     ax_r.loglog([xk, xk1], [ek, ek1], "o", color=BLUE, mfc="white", mew=2.4, ms=11, zorder=6)
     ax_r.text(xk * 1.07, ek * 1.06, r"$(x_k,\ E_k)$", color=BLUE, fontsize=12.5, ha="left", va="bottom", weight="bold")
     ax_r.text(
-        xk1 * 0.94,
-        ek1 * 0.80,
+        xk1 * 1.06,
+        ek1 * 0.85,
         r"$(x_{k+1},\ E_{k+1})$",
         color=BLUE,
         fontsize=12.5,
-        ha="right",
+        ha="left",
         va="top",
         weight="bold",
     )
@@ -1144,6 +1145,316 @@ def fig15_2_cost_to_target(out_root):
     plt.close(fig)
 
 
+# --------------------------------------------------------------------------- 16.2
+def fig16_2_cell_memory_breakdown(out_root):
+    """Figure 16.2: Empirical memory footprint per grid cell in wakis/estimate.py.
+
+    Source lines in user_manual.md: 2732-2749.
+    """
+    out_dir = out_root / "section16"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pull coefficients directly from wakis.estimate and assert against user_manual.md lines 2732-2749
+    naive_6_fields = 6 * 8  # user_manual.md line 2732: 6 x 8 = 48 B for (Ex, Ey, Ez, Hx, Hy, Hz) float64
+    assert naive_6_fields == 48
+
+    host_plain_f64_fixed, host_plain_f64 = est_mod._HOST[("cpu", False, "float64")]  # line 2738: 392 MB, 1109 B/cell
+    host_plain_f32_fixed, host_plain_f32 = est_mod._HOST[("cpu", False, "float32")]  # line 2739: 393 MB, 813 B/cell
+    host_cpml_f64_fixed, host_cpml_f64 = est_mod._HOST[("cpu", True, "float64")]  # line 2740: 428 MB, 953 B/cell
+    host_gpu_f64_fixed, host_gpu_f64 = est_mod._HOST[("gpu", True, "float64")]  # line 2741: 587 MB, 940 B/cell
+    gpu_cpml_f64 = est_mod._GPU[(True, "float64")]  # line 2741: 736 B/cell
+    gpu_fused_extra = est_mod._GPU_FUSED_CPML_BYTES  # line 2741: +380 B/cell -> 1116 B/cell
+    host_gpu_f32_fixed, host_gpu_f32 = est_mod._HOST[("gpu", True, "float32")]  # line 2742: 566 MB, 605 B/cell
+    gpu_cpml_f32 = est_mod._GPU[(True, "float32")]  # line 2742: 457 B/cell
+
+    conf_all_inc, conf_all_cut = est_mod._CONFORMAL_RUN["all"]  # line 2743: +191 B/cell, +4895 B/cut cell
+    conf_all_fixed, conf_all_peak, _ = est_mod._CONFORMAL_SETUP["all"]  # line 2743: 420 MB, 1339 B/cell setup peak
+    conf_all_gpu = est_mod._CONFORMAL_GPU["all"]  # line 2743: +142 B/cell
+
+    conf_ten_inc, conf_ten_cut = est_mod._CONFORMAL_RUN["tensor"]  # line 2744: +311 B/cell, +3137 B/cut cell
+    conf_ten_fixed, conf_ten_peak, _ = est_mod._CONFORMAL_SETUP["tensor"]  # line 2744: 424 MB, 1453 B/cell setup peak
+    conf_ten_gpu = est_mod._CONFORMAL_GPU["tensor"]  # line 2744: +154 B/cell
+
+    disp_steady = est_mod._DISPERSIVE_BYTES  # line 2745: +88 B/edge steady
+    disp_peak = est_mod._DISPERSIVE_TRANSIENT  # line 2745: +160 B/edge setup peak
+    tet_base = est_mod._UNSTRUCTURED_BASE  # line 2746: 396 MB fixed
+    tet_per_cell = est_mod._UNSTRUCTURED_PER_TET  # line 2746: 2523 B/tet
+    tet_step_ns = est_mod._UNSTRUCTURED_STEP * 1e9  # line 2746: 52 ns/tet/step
+
+    # Assert exact numerical equality with every quoted manual value (lines 2738-2749)
+    assert (host_plain_f64_fixed, host_plain_f64) == (392e6, 1109.0)
+    assert (host_plain_f32_fixed, host_plain_f32) == (393e6, 813.0)
+    assert (host_cpml_f64_fixed, host_cpml_f64) == (428e6, 953.0)
+    assert (host_gpu_f64_fixed, host_gpu_f64, gpu_cpml_f64, gpu_fused_extra) == (587e6, 940.0, 736.0, 380.0)
+    assert gpu_cpml_f64 + gpu_fused_extra == 1116.0
+    assert (host_gpu_f32_fixed, host_gpu_f32, gpu_cpml_f32) == (566e6, 605.0, 457.0)
+    assert (conf_all_fixed, host_plain_f64 + conf_all_inc, conf_all_peak, conf_all_gpu, conf_all_cut) == (
+        420e6,
+        1300.0,
+        1339.0,
+        142.0,
+        4895.0,
+    )
+    assert (conf_ten_fixed, host_plain_f64 + conf_ten_inc, conf_ten_peak, conf_ten_gpu, conf_ten_cut) == (
+        424e6,
+        1420.0,
+        1453.0,
+        154.0,
+        3137.0,
+    )
+    assert (disp_steady, disp_peak, tet_base, tet_per_cell, round(tet_step_ns)) == (88.0, 160.0, 396e6, 2523.0, 52)
+
+    # Also verify via the public wakis.estimate.estimate API that slopes match per-cell coefficients
+    e1 = est_mod.estimate(100_000, safety=1.0, backend="gpu", cpml=True, dtype="float64", fused=True)
+    e2 = est_mod.estimate(200_000, safety=1.0, backend="gpu", cpml=True, dtype="float64", fused=True)
+    assert np.isclose((e2.host_bytes - e1.host_bytes) / 100_000, 940.0)
+    assert np.isclose((e2.gpu_bytes - e1.gpu_bytes) / 100_000, 1116.0)
+
+    fig = plt.figure(figsize=(W, H))
+    fig.add_artist(plt.Line2D([0.345, 0.345], [0.06, 0.94], transform=fig.transFigure, color=LGREY, lw=1.5))
+
+    # ---- LEFT PANEL (34% width): 48 B naive vs ~0.6-1.4 kB actual -----------
+    fig.text(0.172, 0.93, "48 B naive vs ~0.6–1.4 kB actual", ha="center", fontsize=16.5, weight="bold")
+    ax1 = fig.add_axes([0.02, 0.05, 0.315, 0.84])
+    bare(ax1)
+
+    # Visual comparison of 48 B bar vs the full cell storage stack (lines 2732-2733)
+    # Left column: 48 B tiny green bar; Right column: full ~0.6-1.4 kB stack
+    ax1.add_patch(Rectangle((0.08, 0.65), 0.72, 0.14, fc=LGREEN, ec=GREEN, lw=2.0, zorder=3))
+    ax1.text(0.44, 0.72, "48 B", ha="center", va="center", fontsize=13.5, color=GREEN, weight="bold")
+    ax1.text(
+        0.44,
+        0.42,
+        "6 × 8 = 48 B:\n(E_x, E_y, E_z,\nH_x, H_y, H_z)",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=GREEN,
+        weight="bold",
+    )
+
+    # Full stack on right side of Panel 1 (x = 1.05 to 2.95)
+    # Bottom slice: 48 B raw fields
+    ax1.add_patch(Rectangle((1.02, 0.65), 1.92, 0.14, fc=LGREEN, ec=GREEN, lw=1.6, zorder=3))
+    ax1.text(1.98, 0.72, "Raw (E, H) fields: 48 B", ha="center", va="center", fontsize=11.0, color=GREEN, weight="bold")
+
+    # Middle block: Grid & material tensors (blue)
+    ax1.add_patch(Rectangle((1.02, 0.82), 1.92, 0.95, fc=LBLUE, ec=BLUE, lw=1.8, zorder=3))
+    ax1.text(
+        1.98,
+        1.295,
+        "Grid & material tensors:\nL, tL, S, tS,\nieps, imu, sigma,\nE, H, J",
+        ha="center",
+        va="center",
+        fontsize=11.8,
+        color=BLUE,
+        weight="bold",
+    )
+
+    # Top block: CSR curl matrices (dark grey)
+    ax1.add_patch(Rectangle((1.02, 1.80), 1.92, 1.25, fc=LGREY, ec=GREY, lw=1.8, zorder=3))
+    ax1.text(
+        1.98,
+        2.425,
+        "CSR curl matrices:\nD, Dt,\ntDsiDmuiDaC,\nitDaiDepsDstC\n(indptr, indices, data)",
+        ha="center",
+        va="center",
+        fontsize=11.8,
+        color=GREY,
+        weight="bold",
+    )
+
+    # Bottom grey note (lines 2734, 2738-2744, 2749)
+    box(
+        ax1,
+        (1.50, -0.15),
+        2.88,
+        0.66,
+        "Fixed Python/SciPy overhead: 392–587 MB\n"
+        "×1.25 safety factor  |  ×2.0 for complex128 Bloch\n"
+        "÷P per cell for MPI (n_ranks=P)",
+        LGREY,
+        GREY,
+        fs=10.5,
+        tc="black",
+    )
+
+    ax1.set_xlim(-0.02, 3.04)
+    ax1.set_ylim(-0.58, 3.25)
+
+    # ---- RIGHT PANEL (66% width): Empirical bytes per cell ------------------
+    fig.text(0.67, 0.93, "Empirical bytes per cell (wakis/estimate.py)", ha="center", fontsize=16.5, weight="bold")
+    ax2 = fig.add_axes([0.525, 0.13, 0.455, 0.69])
+    clean_axes(ax2)
+
+    labels = [
+        "Plain CPU (float64, PEC)",
+        "Plain CPU (float32, PEC)",
+        "CPML CPU (float64)",
+        "CPML GPU (float64, CuPy)",
+        "CPML GPU (float32, CuPy)",
+        "Conformal (all, float64)",
+        "Conformal (tensor, float64)",
+    ]
+    y_pos = np.arange(len(labels), dtype=float)[::-1]  # top to bottom
+
+    # Reference line at 48 B (6 fields only)
+    ax2.axvline(naive_6_fields, color=GREEN, lw=1.8, ls="--", zorder=2)
+    ax2.text(
+        naive_6_fields + 22,
+        y_pos[0] + 0.36,
+        "48 B (6 fields only)",
+        color=GREEN,
+        fontsize=10.5,
+        weight="bold",
+        ha="left",
+        va="bottom",
+    )
+
+    bh = 0.33  # bar height
+
+    # (1) Plain CPU (float64, PEC): 1109 B/cell
+    ax2.barh(y_pos[0], host_plain_f64, height=0.46, color=BLUE, edgecolor=BLUE, lw=1.2, label="Host RAM (steady)")
+    ax2.text(host_plain_f64 + 25, y_pos[0], "1,109 B/cell", va="center", fontsize=11.0, color=BLUE, weight="bold")
+
+    # (2) Plain CPU (float32, PEC): 813 B/cell
+    ax2.barh(y_pos[1], host_plain_f32, height=0.46, color=BLUE, edgecolor=BLUE, lw=1.2)
+    ax2.text(host_plain_f32 + 25, y_pos[1], "813 B/cell", va="center", fontsize=11.0, color=BLUE, weight="bold")
+
+    # (3) CPML CPU (float64): 953 B/cell
+    ax2.barh(y_pos[2], host_cpml_f64, height=0.46, color=BLUE, edgecolor=BLUE, lw=1.2)
+    ax2.text(host_cpml_f64 + 25, y_pos[2], "953 B/cell", va="center", fontsize=11.0, color=BLUE, weight="bold")
+
+    # (4) CPML GPU (float64, CuPy): Host 940 B/cell, GPU VRAM 736 B/cell + 380 B/cell fused -> 1,116 B/cell
+    ax2.barh(y_pos[3] + bh / 2, host_gpu_f64, height=bh, color=BLUE, edgecolor=BLUE, lw=1.2)
+    ax2.text(host_gpu_f64 + 25, y_pos[3] + bh / 2 + 0.02, "940 B/cell", va="center", fontsize=10.5, color=BLUE, weight="bold")
+    ax2.barh(
+        y_pos[3] - bh / 2,
+        gpu_cpml_f64,
+        height=bh,
+        color=ORANGE,
+        edgecolor=ORANGE,
+        lw=1.2,
+        label="GPU VRAM",
+    )
+    ax2.barh(
+        y_pos[3] - bh / 2,
+        gpu_fused_extra,
+        left=gpu_cpml_f64,
+        height=bh,
+        facecolor=LGREEN,
+        edgecolor=GREEN,
+        hatch="///",
+        lw=1.4,
+        label="GPU fused=True (+380 B/cell)",
+    )
+    ax2.text(
+        gpu_cpml_f64 + gpu_fused_extra + 25,
+        y_pos[3] - bh / 2 - 0.02,
+        "736 B/cell (+380 B/cell: fused=True → 1,116 B/cell)",
+        va="center",
+        fontsize=10.0,
+        color=GREEN,
+        weight="bold",
+    )
+
+    # (5) CPML GPU (float32, CuPy): Host 605 B/cell, GPU VRAM 457 B/cell
+    ax2.barh(y_pos[4] + bh / 2, host_gpu_f32, height=bh, color=BLUE, edgecolor=BLUE, lw=1.2)
+    ax2.text(host_gpu_f32 + 25, y_pos[4] + bh / 2, "605 B/cell", va="center", fontsize=10.5, color=BLUE, weight="bold")
+    ax2.barh(y_pos[4] - bh / 2, gpu_cpml_f32, height=bh, color=ORANGE, edgecolor=ORANGE, lw=1.2)
+    ax2.text(gpu_cpml_f32 + 25, y_pos[4] - bh / 2, "457 B/cell", va="center", fontsize=10.5, color=ORANGE, weight="bold")
+
+    # (6) Conformal (all, float64): steady 1109 + 191 = 1300 B/cell, setup peak 1339 B/cell, GPU +142 B/cell, +4895 B/cut cell
+    steady_all = host_plain_f64 + conf_all_inc
+    ax2.barh(y_pos[5] + bh / 2, steady_all, height=bh, color=BLUE, edgecolor=BLUE, lw=1.2)
+    ax2.barh(
+        y_pos[5] + bh / 2,
+        conf_all_peak - steady_all,
+        left=steady_all,
+        height=bh,
+        facecolor="none",
+        edgecolor=RED,
+        lw=2.0,
+        label="Conformal setup peak",
+    )
+    ax2.text(
+        conf_all_peak + 25,
+        y_pos[5] + bh / 2 + 0.02,
+        "1109 + 191 = 1,300 B/cell (1,339 B/cell setup peak)",
+        va="center",
+        fontsize=9.8,
+        color=RED,
+        weight="bold",
+    )
+    ax2.barh(y_pos[5] - bh / 2, conf_all_gpu, height=bh, color=ORANGE, edgecolor=ORANGE, lw=1.2)
+    ax2.text(
+        conf_all_gpu + 25,
+        y_pos[5] - bh / 2 - 0.02,
+        "+142 B/cell VRAM  |  +4,895 B / cut cell",
+        va="center",
+        fontsize=9.8,
+        color=ORANGE,
+        weight="bold",
+    )
+
+    # (7) Conformal (tensor, float64): steady 1109 + 311 = 1420 B/cell, setup peak 1453 B/cell, GPU +154 B/cell, +3137 B/cut cell
+    steady_ten = host_plain_f64 + conf_ten_inc
+    ax2.barh(y_pos[6] + bh / 2, steady_ten, height=bh, color=BLUE, edgecolor=BLUE, lw=1.2)
+    ax2.barh(
+        y_pos[6] + bh / 2,
+        conf_ten_peak - steady_ten,
+        left=steady_ten,
+        height=bh,
+        facecolor="none",
+        edgecolor=RED,
+        lw=2.0,
+    )
+    ax2.text(
+        conf_ten_peak + 25,
+        y_pos[6] + bh / 2 + 0.02,
+        "1109 + 311 = 1,420 B/cell (1,453 B/cell setup peak)",
+        va="center",
+        fontsize=9.8,
+        color=RED,
+        weight="bold",
+    )
+    ax2.barh(y_pos[6] - bh / 2, conf_ten_gpu, height=bh, color=ORANGE, edgecolor=ORANGE, lw=1.2)
+    ax2.text(
+        conf_ten_gpu + 25,
+        y_pos[6] - bh / 2 - 0.02,
+        "+154 B/cell VRAM  |  +3,137 B / cut cell",
+        va="center",
+        fontsize=9.8,
+        color=ORANGE,
+        weight="bold",
+    )
+
+    # Inset callout for UnstructuredFIT3D and Dispersive ADE (lines 2745-2746)
+    ax2.text(
+        3120,
+        y_pos[1],
+        "UnstructuredFIT3D:\n  2,523 B/tet, 396 MB fixed, 52 ns/tet/step\n"
+        "Dispersive ADE:\n  +88 B/edge steady, +160 B/edge setup peak",
+        fontsize=10.0,
+        color=GREY,
+        ha="right",
+        va="center",
+        bbox=dict(boxstyle="round,pad=0.28", fc=LGREY, ec=GREY, lw=1.2),
+        zorder=6,
+    )
+
+    ax2.set_yticks(y_pos)
+    ax2.set_yticklabels(labels, fontsize=11.0, weight="bold")
+    ax2.set_xlim(0, 3180)
+    ax2.set_ylim(-0.65, len(labels) - 0.25)
+    ax2.set_xticks([0, 500, 1000, 1500])
+    ax2.set_xlabel("bytes per cell [B/cell] (before ×1.25 safety factor)", fontsize=12.5)
+    ax2.legend(loc="lower center", bbox_to_anchor=(0.50, 1.01), ncol=2, frameon=False, fontsize=10.0)
+
+    fig.savefig(out_dir / "fig16_2_cell_memory_breakdown.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     out_root = Path(sys.argv[1])
     out_root.mkdir(parents=True, exist_ok=True)
@@ -1151,3 +1462,4 @@ if __name__ == "__main__":
     fig14_2_tete_dispersion(out_root)
     fig14_3_cold_plasma_wake(out_root)
     fig15_2_cost_to_target(out_root)
+    fig16_2_cell_memory_breakdown(out_root)
