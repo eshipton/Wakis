@@ -39,6 +39,10 @@ from wakis.curvilinear import (
     ogrid_mesh,
     radial_nodes,
 )  # noqa: E402
+from wakis.highorder import DGTD2D  # noqa: E402
+from wakis.highorder.fdtd24 import FDTD24  # noqa: E402
+from wakis.highorder.mesh2d import TriMesh  # noqa: E402
+from wakis.highorder.nodal2d import reference_triangle  # noqa: E402
 from wakis.resonances import harminv  # noqa: E402
 from wakis.subgrid import (
     Circle as SubgridCircle,
@@ -1833,6 +1837,385 @@ def fig11_3_curvilinear_ogrid_nfit(outroot):
     plt.close(fig)
 
 
+# -------------------------------------------------------------------------- 11.6
+def fig11_6_high_order_dgtd_fdtd24(outroot):
+    """Draw Figure 11.6: High-order solvers (DGTD2D and FDTD24)."""
+    out = outroot / "section11"
+    out.mkdir(parents=True, exist_ok=True)
+
+    fig = plt.figure(figsize=(W, H))
+
+    # ---- LEFT PANEL: Curved vs straight high-order triangles (DGTD2D)
+    ax1 = fig.add_axes([0.015, 0.14, 0.31, 0.75])
+    bare(ax1)
+
+    R_cyl = 1.0e-6  # r = 1.0e-6 (1 um, user_manual.md line 2231)
+    # Upper triangle (straight-sided p = 4) on arc [16 deg, 58 deg]
+    th_u0, th_u1 = np.deg2rad(16.0), np.deg2rad(58.0)
+    v_u0 = np.array([R_cyl * np.cos(th_u0), R_cyl * np.sin(th_u0)])
+    v_u1 = np.array([R_cyl * np.cos(th_u1), R_cyl * np.sin(th_u1)])
+    v_u2 = np.array(
+        [
+            0.42e-6 * np.cos(0.5 * (th_u0 + th_u1)),
+            0.42e-6 * np.sin(0.5 * (th_u0 + th_u1)),
+        ]
+    )
+
+    # Lower two adjacent curved triangles (p = 5) on arcs [-56 deg, -20 deg] and [-20 deg, 16 deg]
+    th_l0, th_l1, th_l2 = np.deg2rad(-56.0), np.deg2rad(-20.0), np.deg2rad(16.0)
+    v_l0 = np.array([R_cyl * np.cos(th_l0), R_cyl * np.sin(th_l0)])
+    v_l1 = np.array([R_cyl * np.cos(th_l1), R_cyl * np.sin(th_l1)])
+    v_l2 = v_u0.copy()
+    v_in = np.array([0.38e-6 * np.cos(th_l1), 0.38e-6 * np.sin(th_l1)])
+
+    tmesh_straight = TriMesh(
+        np.array([v_u0, v_u1, v_u2]),
+        np.array([[0, 1, 2]]),
+        np.array([1]),
+        circles=[(0.0, 0.0, R_cyl)],
+    )
+    dg_straight = DGTD2D(
+        tmesh_straight, p=4, materials={1: [4.0, 1.0]}, curved=False, dt=1e-18
+    )
+
+    tmesh_curved = TriMesh(
+        np.array([v_l0, v_l1, v_l2, v_in]),
+        np.array([[0, 1, 3], [1, 2, 3]]),
+        np.array([1, 1]),
+        circles=[(0.0, 0.0, R_cyl)],
+    )
+    dg_curved = DGTD2D(
+        tmesh_curved, p=5, materials={1: [4.0, 1.0]}, curved=True, dt=1e-18
+    )
+
+    # Assertions on reference triangles and curved vs straight boundary nodes
+    T4, T5 = reference_triangle(4), reference_triangle(5)
+    assert T4.Np == 15 and T5.Np == 21
+    f0_nodes = T5.Fmask[
+        0
+    ]  # face 0 lies on the circle r = 1 um for both curved triangles
+    r_curved_face = np.hypot(dg_curved.x[f0_nodes, :], dg_curved.y[f0_nodes, :])
+    assert np.allclose(r_curved_face, R_cyl, rtol=1e-12)
+    r_straight_mid = float(
+        np.hypot(dg_straight.x[T4.Fmask[0][2], 0], dg_straight.y[T4.Fmask[0][2], 0])
+    )
+    assert np.isclose(r_straight_mid, R_cyl * np.cos(0.5 * (th_u1 - th_u0)), rtol=1e-12)
+    assert (R_cyl - r_straight_mid) > 0.05 * R_cyl
+
+    # Plot exact circle arc r = 1 um in dark grey
+    th_arc = np.linspace(np.deg2rad(-66.0), np.deg2rad(66.0), 300)
+    ax1.plot(np.cos(th_arc), np.sin(th_arc), color=GREY, lw=3.0, zorder=3)
+    ax1.text(
+        0.58,
+        0.92,
+        r"$r = 1\ \mu\mathrm{m}$",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=GREY,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.16", fc="white", ec=GREY, lw=1.0),
+        zorder=7,
+    )
+
+    # Upper straight-sided p = 4 triangle + red chord-to-arc geometric error lens
+    tri_u_um = np.array([v_u0, v_u1, v_u2]) * 1e6
+    ax1.add_patch(Polygon(tri_u_um, closed=True, fc="white", ec=BLUE, lw=2.0, zorder=2))
+    th_lens = np.linspace(th_u0, th_u1, 80)
+    lens_poly = np.vstack(
+        [np.column_stack([np.cos(th_lens), np.sin(th_lens)]), tri_u_um[0:1]]
+    )
+    ax1.add_patch(Polygon(lens_poly, closed=True, fc=LRED, ec=RED, lw=1.8, zorder=4))
+    ax1.plot(
+        dg_straight.x[:, 0] * 1e6,
+        dg_straight.y[:, 0] * 1e6,
+        "o",
+        color=GREY,
+        ms=4.2,
+        alpha=0.75,
+        zorder=5,
+    )
+    ax1.annotate(
+        "straight-sided p = 4:\npolygonal chord stalls\nat 1–5% error",
+        xy=(0.94 * np.cos(0.5 * (th_u0 + th_u1)), 0.94 * np.sin(0.5 * (th_u0 + th_u1))),
+        xytext=(0.12, 0.56),
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=RED,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LRED, ec=RED, lw=1.2),
+        arrowprops=dict(arrowstyle="-|>", color=RED, lw=1.6, shrinkA=0, shrinkB=4),
+        zorder=8,
+    )
+
+    # Lower two curved p = 5 triangles following the exact arc r = 1 um
+    for k_el, (t_a, t_b) in enumerate(((th_l0, th_l1), (th_l1, th_l2))):
+        th_c = np.linspace(t_a, t_b, 60)
+        v_in_um = v_in * 1e6
+        curved_poly = np.vstack(
+            [np.column_stack([np.cos(th_c), np.sin(th_c)]), v_in_um[None, :]]
+        )
+        ax1.add_patch(
+            Polygon(
+                curved_poly,
+                closed=True,
+                fc=LBLUE if k_el == 0 else "#e8f1fa",
+                ec=BLUE,
+                lw=2.2,
+                zorder=2,
+            )
+        )
+        ax1.plot(
+            dg_curved.x[:, k_el] * 1e6,
+            dg_curved.y[:, k_el] * 1e6,
+            "o",
+            color=BLUE,
+            ms=4.8,
+            zorder=5,
+        )
+
+    # Orange double arrows across the shared elemental face (v_in <-> v_l1)
+    p_shared = 0.52 * (v_in + v_l1) * 1e6
+    dir_shared = (v_l1 - v_in) / np.linalg.norm(v_l1 - v_in)
+    n_shared = np.array([-dir_shared[1], dir_shared[0]])
+    arrow(
+        ax1,
+        p_shared - 0.11 * n_shared,
+        p_shared + 0.11 * n_shared,
+        color=ORANGE,
+        lw=2.4,
+        style="<|-|>",
+        ms=16,
+        z=7,
+    )
+    ax1.text(
+        0.54,
+        -0.78,
+        "circles_mesh, p = 5",
+        ha="center",
+        va="center",
+        fontsize=11.5,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.20", fc=LBLUE, ec=BLUE, lw=1.2),
+        zorder=7,
+    )
+    ax1.annotate(
+        "upwind Riemann flux\n+ LSRK(5,4)",
+        xy=p_shared,
+        xytext=(0.15, -0.45),
+        ha="center",
+        va="center",
+        fontsize=11.0,
+        color=ORANGE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.22", fc=LORANGE, ec=ORANGE, lw=1.2),
+        arrowprops=dict(arrowstyle="-|>", color=ORANGE, lw=1.6, shrinkA=0, shrinkB=4),
+        zorder=8,
+    )
+
+    ax1.set_xlim(-0.28, 1.15)
+    ax1.set_ylim(-1.05, 1.08)
+    ax1.set_title(
+        "Curved vs. straight high-order\ntriangles (DGTD2D)",
+        fontsize=13.5,
+        weight="bold",
+        pad=8,
+    )
+
+    # ---- CENTRE PANEL: Cartesian (2,4) staggered stencil (FDTD24)
+    ax2 = fig.add_axes([0.345, 0.18, 0.27, 0.68])
+    ax2.axis("off")
+
+    # Instantiate real FDTD24 solver (user_manual.md lines 2241-2243) and assert 4th-order stencil identities
+    fd24 = FDTD24(
+        h=0.08e-6,
+        half_width=0.32e-6,
+        n_pml=2,
+        cylinders=[],
+        polarization="TM",
+        order=4,
+        time_scheme="lsrk4",
+    )
+    c1, c2 = fd24.c1, fd24.c2
+    assert np.isclose(c1, 9.0 / 8.0, rtol=1e-15) and np.isclose(
+        c2, -1.0 / 24.0, rtol=1e-15
+    )
+    # 1st-order consistency and 3rd-order cancellation on staggered half-points +/- 1/2, +/- 3/2
+    assert np.isclose(c1 * 1.0 + c2 * 3.0, 1.0, rtol=1e-15)
+    assert np.isclose(c1 * (0.5**3 * 2.0) + c2 * (1.5**3 * 2.0), 0.0, atol=1e-15)
+
+    # Staggered Cartesian grid line along x
+    ax2.plot([-2.15, 2.15], [0.0, 0.0], color=GREY, lw=2.2, zorder=2)
+    for x_int in (-2.0, -1.0, 1.0, 2.0):
+        ax2.plot([x_int, x_int], [-0.08, 0.08], color=GREY, lw=1.4, zorder=2)
+
+    # Central blue electric node at x = 0
+    ax2.plot(0.0, 0.0, "o", color=BLUE, ms=15.0, mec="white", mew=1.8, zorder=6)
+    ax2.text(
+        0.0,
+        -0.22,
+        "central electric node",
+        ha="center",
+        va="top",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+    )
+
+    # Four bracketing orange magnetic nodes at x = +/- 0.5, +/- 1.5
+    for xh in (-1.5, -0.5, 0.5, 1.5):
+        ax2.plot(xh, 0.0, "s", color=ORANGE, ms=12.0, mec="white", mew=1.5, zorder=6)
+
+    # Inner stencil arcs (thick blue)
+    arrow(ax2, (-0.5, 0.06), (-0.05, 0.06), color=BLUE, lw=3.6, rad=-0.48, ms=18, z=5)
+    arrow(ax2, (0.5, 0.06), (0.05, 0.06), color=BLUE, lw=3.6, rad=0.48, ms=18, z=5)
+    ax2.text(
+        0.0,
+        0.38,
+        "inner neighbours",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=BLUE, lw=1.0),
+        zorder=7,
+    )
+
+    # Outer stencil arcs (thin orange)
+    arrow(ax2, (-1.5, 0.06), (-0.08, 0.10), color=ORANGE, lw=2.0, rad=-0.65, ms=16, z=4)
+    arrow(ax2, (1.5, 0.06), (0.08, 0.10), color=ORANGE, lw=2.0, rad=0.65, ms=16, z=4)
+    ax2.text(
+        0.0,
+        0.92,
+        "outer neighbours",
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=ORANGE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.18", fc="white", ec=ORANGE, lw=1.0),
+        zorder=7,
+    )
+
+    # Badge required by spec
+    ax2.text(
+        0.0,
+        -0.88,
+        'FDTD24: fourth-order staggered\nspatial differences\n(order=4, time_scheme="lsrk4")',
+        ha="center",
+        va="center",
+        fontsize=12.0,
+        color=BLUE,
+        weight="bold",
+        bbox=dict(boxstyle="round,pad=0.32", fc=LBLUE, ec=BLUE, lw=1.4),
+    )
+
+    ax2.set_xlim(-2.25, 2.25)
+    ax2.set_ylim(-1.45, 1.35)
+    ax2.set_title(
+        "Cartesian (2,4) staggered\nstencil (FDTD24)",
+        fontsize=13.5,
+        weight="bold",
+        pad=8,
+    )
+
+    # ---- RIGHT PANEL: Unknowns to reach 0.1% error (manual Sec. 11.9, lines 2247-2248)
+    ax3 = fig.add_axes([0.65, 0.18, 0.33, 0.68])
+
+    # Exact quoted numbers from user_manual.md lines 2247-2248
+    u_b1_tri = 2.1e6  # ~2.1 M unknowns (~2600 s), line 2247
+    u_b1_dg5 = 17.0e3  # 17k unknowns (91 s, ~100x fewer, ~28x faster), line 2247
+    u_b1_001 = 25.0e3  # 25k unknowns (reaches 0.01% RMS), line 2247
+    u_b2_tri = 88.0e3  # 88k unknowns, line 2248
+    u_b2_dg2 = 6.0e3  # 6.0k unknowns (14.7x fewer), line 2248
+
+    assert np.isclose(u_b2_tri / u_b2_dg2, 14.7, atol=0.05)
+    assert u_b1_tri / u_b1_dg5 > 100.0
+
+    y_pos = np.array([3.3, 2.4, 1.05, 0.2])
+    vals = [u_b1_tri, u_b1_dg5, u_b2_tri, u_b2_dg2]
+    fcs = [LGREY, LBLUE, LGREY, LBLUE]
+    ecs = [GREY, BLUE, GREY, BLUE]
+    bar_labels = [
+        "Graded triangles + PML:\n~2.1 M unknowns (~2600 s)",
+        "Curved DGTD2D p = 5: 17k unknowns\n(91 s, ~100× fewer, ~28× faster)",
+        "Uniform triangles:\n88k unknowns",
+        "Curved DGTD2D p = 2:\n6.0k unknowns (14.7× fewer)",
+    ]
+
+    ax3.barh(y_pos, vals, height=0.60, color=fcs, edgecolor=ecs, lw=1.8, zorder=3)
+    for yp, v_bar, lab_b, col_b in zip(y_pos, vals, bar_labels, ecs):
+        x_txt = v_bar * 1.18 if v_bar < 5e5 else 2.2e3
+        ax3.text(
+            x_txt,
+            yp,
+            lab_b,
+            ha="left",
+            va="center",
+            fontsize=10.5,
+            color=col_b if v_bar < 5e5 else "black",
+            weight="bold",
+            zorder=5,
+        )
+
+    # Green marker at 25k unknowns (reaches 0.01% RMS) on B1 (line 2247)
+    ax3.plot(u_b1_001, 1.82, "D", color=GREEN, ms=10.0, mec="white", mew=1.4, zorder=6)
+    ax3.text(
+        u_b1_001 * 1.35,
+        1.82,
+        "25k unknowns (reaches 0.01% RMS)",
+        ha="left",
+        va="center",
+        fontsize=10.5,
+        color=GREEN,
+        weight="bold",
+        zorder=6,
+    )
+
+    # Group headers
+    ax3.text(
+        1.3e3,
+        3.82,
+        "B1 Mie cylinder (0.1% TM RMS)",
+        fontsize=12.0,
+        color="black",
+        weight="bold",
+    )
+    ax3.axhline(1.50, color=LGREY, lw=1.5, zorder=1)
+    ax3.text(
+        1.3e3,
+        1.56,
+        r"B2-Au-TE (0.1% $Q_{\mathrm{ext}}$ NRMS)",
+        fontsize=12.0,
+        color="black",
+        weight="bold",
+    )
+
+    ax3.set_xscale("log")
+    ax3.set_xlim(1.0e3, 3.5e7)
+    ax3.set_ylim(-0.35, 4.15)
+    ax3.set_yticks([])
+    ax3.set_xticks([1e3, 1e4, 1e5, 1e6, 1e7])
+    ax3.set_xticklabels(
+        [r"$10^3$", r"$10^4$", r"$10^5$", r"$10^6$", r"$10^7$"], fontsize=11.5
+    )
+    ax3.set_xlabel("unknowns (log scale)", fontsize=13.5)
+    ax3.set_title(
+        "Unknowns to reach 0.1% error\n(manual Sec. 11.9)",
+        fontsize=13.5,
+        weight="bold",
+        pad=8,
+    )
+    for sp_name in ("top", "right", "left"):
+        ax3.spines[sp_name].set_visible(False)
+
+    fig.savefig(out / "fig11_6_high_order_dgtd_fdtd24.png", facecolor="white")
+    plt.close(fig)
+
+
 if __name__ == "__main__":
     outroot = Path(sys.argv[1])
     outroot.mkdir(parents=True, exist_ok=True)
@@ -1841,3 +2224,4 @@ if __name__ == "__main__":
     fig11_1_triangle_and_polygon_fit(outroot)
     fig11_2_subgrid_and_subtri(outroot)
     fig11_3_curvilinear_ogrid_nfit(outroot)
+    fig11_6_high_order_dgtd_fdtd24(outroot)
