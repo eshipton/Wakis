@@ -802,3 +802,68 @@ The wake and impedance analysis is performed within the `WakeSolver` class in `W
 - **Interoperability**: Wakis can read field maps in HDF5, CSV, or NumPy format
 - **Subvolume extraction** and interpolation are supported for field-based post-processing
 ```
+
+## Plane-section engine for conformal geometry
+
+The module `wakis.conformal.sections` (`solid_measures` and `sheet_measures`) provides a standalone geometry engine that measures how triangulated CAD surfaces cut the staggered Wakis FIT grid, supplying the geometric quantities required by conformal PEC [Dey & Mittra (1997)](https://doi.org/10.1109/75.622536) and subpixel dielectric averaging [Kottke et al. (2008)](https://doi.org/10.1103/PhysRevE.77.036611) as a Wakis adaptation on the upstream physical grid layout.
+
+### Cross-section edge lengths and face areas
+
+For each axis $`w \in \{0, 1, 2\}`$ with right-handed cyclic in-plane axes $`(u, v)`$, the triangulated surface (oriented outward by signed volume) is sliced by the planes $`w = \text{const}`$ into counter-clockwise polygonal contour segments $`(\mathbf{p}_m, \mathbf{q}_m)`$ in the $`(u, v)`$ plane.
+
+Along any grid line parallel to $`u`$ (or $`v`$), the cumulative length inside the 2D section from $`-\infty`$ to coordinate $`x`$ is evaluated from all contour crossings $`c_k`$ along that line:
+
+```math
+F(x) = \sum_k s_k (x - c_k)_+, \qquad (x - c_k)_+ = \max(x - c_k, 0),
+```
+
+where $`s_k = +1`$ when the grid line enters the section and $`s_k = -1`$ when it leaves. The length of primal edge $`[x_i, x_{i+1}]`$ inside the solid is then $`\ell_i = F(x_{i+1}) - F(x_i)`$, which handles arbitrary numbers of crossings per edge without assuming a single interface crossing per cell.
+
+The area of primal face $`R_{i,j} = [u_i, u_{i+1}] \times [v_j, v_{j+1}]`$ inside the section $`\Omega`$ is computed exactly for polygonal cross sections by Green's theorem in coordinates $`(\tilde u, \tilde v) = (u - u_i, v - v_j)`$ local to the lower corner $`(u_i, v_j)`$:
+
+```math
+A_{i,j} = \frac{1}{2} \oint_{\partial(\Omega \cap R_{i,j})} (\tilde u\,\mathrm{d}\tilde v - \tilde v\,\mathrm{d}\tilde u)
+= \frac{1}{2}\left[\sum_{m \subset R_{i,j}} (\tilde u_{m,0}\tilde v_{m,1} - \tilde u_{m,1}\tilde v_{m,0}) + \Delta u_i\,\ell_{v,i+1,j} + \Delta v_j\,\ell_{u,i,j+1}\right],
+```
+
+where contour segments are split at the grid lines, the lower rectangle sides $`\tilde u = 0`$ and $`\tilde v = 0`$ contribute zero to $`\tilde u\,\mathrm{d}\tilde v - \tilde v\,\mathrm{d}\tilde u`$, and the upper sides $`\tilde u = \Delta u_i`$ and $`\tilde v = \Delta v_j`$ contribute $`\Delta u_i\,\ell_{v,i+1,j}`$ and $`\Delta v_j\,\ell_{u,i,j+1}`$ from their inside edge lengths.
+
+### Dual-fraction integration and clipped boundary cells
+
+On the upstream Wakis grid, an axis with $`N`$ primal nodes $`x_0 < x_1 < \dots < x_{N-1}`$ defines $`N - 1`$ physical primal cells and $`N`$ dual intervals bounded by the clipped dual coordinates
+
+```math
+\tilde x = \left(x_0,\, \frac{x_0 + x_1}{2},\, \dots,\, \frac{x_{N-2} + x_{N-1}}{2},\, x_{N-1}\right).
+```
+
+The dual interval of node $`i`$ is $`[\tilde x_i, \tilde x_{i+1}]`$, so the boundary nodes $`i = 0`$ and $`i = N - 1`$ have half-width dual intervals clipped at the domain boundaries.
+
+For a primal edge directed along axis $`c`$, the associated dual cell spans the primal interval along $`c`$ and the clipped dual intervals along the two transverse axes. The volume fraction $`f \in [0, 1]`$ of the solid inside each dual cell is integrated:
+- **Analytically in $`(x, y)`$** by evaluating the exact 2D section areas in horizontal planes $`z = \text{const}`$ on the rectangle grid formed by the primal/dual $`x`$ and $`y`$ bounds;
+- **By the $`n_{\text{sub}}`$-point midpoint quadrature rule along $`z`$** across each $`z`$ interval (primal for $`c = z`$, clipped dual for $`c \in \{x, y\}`$), and dividing by the clipped dual cell volume. This integration is exact for any geometry extruded along $`z`$.
+
+At every primal edge cut by the interface ($`10^{-9} < f < 1 - 10^{-9}`$), `solid_measures` also records the unit outward facet normal of the closest surface triangle to the edge midpoint.
+
+### Degeneracy shift and `on_surface` modes
+
+To resolve degenerate intersections where grid planes or grid lines coincide with surface facets or vertices, the triangulated geometry is evaluated at two opposite coordinate shifts $`\pm \boldsymbol{\delta}`$:
+
+```math
+\boldsymbol{\delta} = 10^{-7}\,h_{\min}\,(1,\, 0.7548776662,\, 0.5698402910), \qquad h_{\min} = \min_{a \in \{x, y, z\}} \min_i \Delta a_i,
+```
+
+with incommensurable components. The two shifted evaluations are combined according to `on_surface`:
+- `on_surface="inside"` (closed set, used for conductors): takes the elementwise maximum over $`\pm\boldsymbol{\delta}`$, so primal edges and faces lying on the surface are counted as inside;
+- `on_surface="outside"` (open set, used for cavities or holes in a conductor): takes the elementwise minimum over $`\pm\boldsymbol{\delta}`$, so primal edges and faces lying on the surface are counted as outside.
+
+For thin planar sheets (`sheet_measures`), the in-plane coordinates are shifted by $`\pm\boldsymbol{\delta}`$ while the normal coordinate remains pinned to the node plane $`w = w_k`$, using the closed-set (`np.maximum`) reduction.
+
+### Limits & failure modes
+
+- **Closed, manifold surfaces**: `solid_measures` requires the input `pyvista.PolyData` to be a closed, non-self-intersecting surface; open or self-intersecting meshes yield undefined cross-section winding numbers.
+- **Independent solid evaluation**: overlapping solids are measured independently; boolean precedence or mixture rules must be applied by the calling physics module.
+- **Axis-aligned node-plane sheets**: `sheet_measures` supports only planar sheets normal to $`x`$, $`y`$, or $`z`$ that lie within $`10^{-6}\,\min \Delta w`$ of a primal node plane; oblique sheets or sheets between node planes raise `ValueError`.
+- **Longitudinal quadrature error**: dual volume fractions use an $`n_{\text{sub}}`$-point midpoint rule along $`z`$, which introduces a quadrature error of order $`\mathcal{O}(\Delta z^2 / n_{\text{sub}}^2)`$ (or $`\mathcal{O}(\Delta z / n_{\text{sub}})`$ when a $`z`$-normal facet lies inside a $`z`$ interval) for geometries that are not extruded along $`z`$.
+- **One shift for dual fractions**: the dual volume fractions are evaluated at the single shift $`+\boldsymbol{\delta}`$ for both `on_surface` modes, so a surface lying exactly on a dual-cell boundary is not classified by `on_surface` there (its effect on the fraction is of order $`10^{-7}`$).
+- **Facet normals**: interface normals are taken from the nearest triangle facet of the tessellated surface rather than an exact smooth surface normal, so their angular accuracy is bounded by the surface mesh resolution.
+
